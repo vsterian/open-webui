@@ -26,16 +26,21 @@
 	export let item = null;
 	export let edit = false;
 	export let small = false;
+	export let statusText: string = '';
+	export let contentType: string = '';
 
 	export let name: string;
 	export let type: string;
 	export let size: number;
+
+	$: isVideo = contentType?.startsWith('video/') || name?.match(/\.(mp4|avi|mov|mkv|webm|wmv|flv)$/i);
 
 	import DocumentPage from '../icons/DocumentPage.svelte';
 	import Database from '../icons/Database.svelte';
 	import PageEdit from '../icons/PageEdit.svelte';
 	import ChatBubble from '../icons/ChatBubble.svelte';
 	import Folder from '../icons/Folder.svelte';
+	import Film from '../icons/Film.svelte';
 	let showModal = false;
 
 	const decodeString = (str: string) => {
@@ -111,9 +116,11 @@
 							? $i18n.t('Note')
 							: type === 'chat'
 								? $i18n.t('Chat')
-								: type === 'file'
-									? $i18n.t('File')
-									: $i18n.t('Document')}
+								: isVideo
+									? $i18n.t('Video')
+									: type === 'file'
+										? $i18n.t('File')
+										: $i18n.t('Document')}
 					placement="top"
 				>
 					{#if type === 'collection'}
@@ -124,6 +131,8 @@
 						<ChatBubble />
 					{:else if type === 'folder'}
 						<Folder />
+					{:else if isVideo}
+						<Film />
 					{:else}
 						<DocumentPage />
 					{/if}
@@ -166,7 +175,9 @@
 			<div class="flex flex-col justify-center -space-y-0.5 px-1 w-full">
 				<div class=" dark:text-gray-100 text-sm flex justify-between items-center">
 					<div class="font-medium line-clamp-1 flex-1 pr-1">{decodeString(name)}</div>
-					{#if size}
+					{#if statusText}
+						<div class="text-blue-500 dark:text-blue-400 text-xs shrink-0 animate-pulse">{statusText}</div>
+					{:else if size}
 						<div class="text-gray-500 text-xs capitalize shrink-0">{formatFileSize(size)}</div>
 					{:else}
 						<div class="text-gray-500 text-xs capitalize shrink-0">{type}</div>

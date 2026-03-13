@@ -50,6 +50,11 @@ from open_webui.storage.provider import Storage
 from open_webui.config import BYPASS_ADMIN_ACCESS_CONTROL
 from open_webui.utils.auth import get_admin_user, get_verified_user
 from open_webui.utils.misc import strict_match_mime_type
+from open_webui.utils.video_indexer import (
+    VideoIndexerClient,
+    VideoIndexerError,
+    build_client_from_config,
+)
 from pydantic import BaseModel
 
 log = logging.getLogger(__name__)
@@ -122,6 +127,17 @@ def process_uploaded_file(
                         user=user,
                         db=db_session,
                     )
+                elif (
+                    content_type.startswith("video/")
+                    and getattr(
+                        request.app.state.config,
+                        "VIDEO_INDEXER_ENABLED",
+                        False,
+                    )
+                ):
+                    _process_video_with_indexer(
+                        request, file_item, file_path, file_metadata, user, db_session
+                    )
                 elif (not content_type.startswith(("image/", "video/"))) or (
                     request.app.state.config.CONTENT_EXTRACTION_ENGINE == "external"
                 ):
@@ -162,6 +178,99 @@ def process_uploaded_file(
     else:
         with SessionLocal() as db_session:
             _process_handler(db_session)
+
+
+def _process_video_with_indexer(
+    request, file_item, file_path, file_metadata, user, db_session
+):
+    """
+    Upload a video to Azure AI Video Indexer, poll until processed,
+    extract transcript + insights, and feed the content into the
+    existing RAG pipeline (chunk → embed → vector store).
+    """
+    try:
+        client = build_client_from_config(request.app.state.config)
+        resolved_path = Storage.get_file(file_path)
+
+        language = (
+            (file_metadata or {}).get("language")
+            or request.app.state.config.VIDEO_INDEXER_LANGUAGE
+            or "en-US"
+        )
+        preset = (
+            request.app.state.config.VIDEO_INDEXER_INDEXING_PRESET or "Default"
+        )
+
+        # 1. Upload to Video Indexer
+        video_id = client.upload_video(
+            file_path=resolved_path,
+            video_name=file_item.filename,
+            language=language,
+            indexing_preset=preset,
+        )
+
+        # Store VI video_id in file metadata
+        meta = file_item.meta if isinstance(file_item.meta, dict) else {}
+        meta["video_indexer"] = {
+            "video_id": video_id,
+            "state": "Processing",
+            "progress": "0%",
+        }
+        Files.update_file_metadata_by_id(file_item.id, meta, db=db_session)
+
+        # 2. Poll until indexing completes
+        client.wait_for_indexing(video_id, poll_interval=15, timeout=3600)
+
+        # 3. Fetch insights + transcript
+        index_data = client.get_video_index(video_id)
+        transcript_text = client.get_transcript(video_id, fmt="txt")
+        structured_content = VideoIndexerClient.extract_structured_content(index_data)
+
+        # Prefer structured content (transcript + keywords + topics etc.)
+        # over raw plain transcript for richer RAG retrieval.
+        final_content = structured_content or transcript_text
+
+        # 4. Persist insights in file metadata
+        meta["video_indexer"]["state"] = "Processed"
+        meta["video_indexer"]["progress"] = "100%"
+        meta["video_indexer"]["insights"] = index_data.get("summarizedInsights", {})
+        Files.update_file_metadata_by_id(file_item.id, meta, db=db_session)
+
+        # 5. Send the extracted text through the RAG pipeline
+        process_file(
+            request,
+            ProcessFileForm(
+                file_id=file_item.id,
+                content=final_content,
+            ),
+            user=user,
+            db=db_session,
+        )
+        log.info(
+            f"Video Indexer processing complete for file {file_item.id} "
+            f"(VI video_id={video_id})"
+        )
+
+    except VideoIndexerError as exc:
+        log.error(f"Video Indexer error for file {file_item.id}: {exc}")
+        # Update metadata with failure state
+        meta = file_item.meta if isinstance(file_item.meta, dict) else {}
+        vi = meta.get("video_indexer", {})
+        vi["state"] = "Failed"
+        vi["error"] = str(exc)
+        meta["video_indexer"] = vi
+        Files.update_file_metadata_by_id(file_item.id, meta, db=db_session)
+        raise Exception(f"Video Indexer processing failed: {exc}")
+
+    except Exception as exc:
+        log.error(f"Unexpected error in Video Indexer for file {file_item.id}: {exc}")
+        meta = file_item.meta if isinstance(file_item.meta, dict) else {}
+        vi = meta.get("video_indexer", {})
+        vi["state"] = "Failed"
+        vi["error"] = str(exc)
+        meta["video_indexer"] = vi
+        Files.update_file_metadata_by_id(file_item.id, meta, db=db_session)
+        raise
 
 
 @router.post("/", response_model=FileModelResponse)

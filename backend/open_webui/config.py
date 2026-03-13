@@ -4214,6 +4214,77 @@ AUDIO_TTS_AZURE_SPEECH_OUTPUT_FORMAT = PersistentConfig(
 
 
 ####################################
+# Video Indexer (Azure AI Video Indexer)
+####################################
+
+VIDEO_INDEXER_ENABLED = PersistentConfig(
+    "VIDEO_INDEXER_ENABLED",
+    "video_indexer.enabled",
+    os.environ.get("VIDEO_INDEXER_ENABLED", "false").lower() == "true",
+)
+
+VIDEO_INDEXER_ACCOUNT_NAME = PersistentConfig(
+    "VIDEO_INDEXER_ACCOUNT_NAME",
+    "video_indexer.account_name",
+    os.getenv("VIDEO_INDEXER_ACCOUNT_NAME", ""),
+)
+
+VIDEO_INDEXER_ACCOUNT_ID = PersistentConfig(
+    "VIDEO_INDEXER_ACCOUNT_ID",
+    "video_indexer.account_id",
+    os.getenv("VIDEO_INDEXER_ACCOUNT_ID", ""),
+)
+
+VIDEO_INDEXER_RESOURCE_GROUP = PersistentConfig(
+    "VIDEO_INDEXER_RESOURCE_GROUP",
+    "video_indexer.resource_group",
+    os.getenv("VIDEO_INDEXER_RESOURCE_GROUP", ""),
+)
+
+VIDEO_INDEXER_SUBSCRIPTION_ID = PersistentConfig(
+    "VIDEO_INDEXER_SUBSCRIPTION_ID",
+    "video_indexer.subscription_id",
+    os.getenv("VIDEO_INDEXER_SUBSCRIPTION_ID", ""),
+)
+
+VIDEO_INDEXER_LOCATION = PersistentConfig(
+    "VIDEO_INDEXER_LOCATION",
+    "video_indexer.location",
+    os.getenv("VIDEO_INDEXER_LOCATION", ""),
+)
+
+VIDEO_INDEXER_TENANT_ID = PersistentConfig(
+    "VIDEO_INDEXER_TENANT_ID",
+    "video_indexer.tenant_id",
+    os.getenv("VIDEO_INDEXER_TENANT_ID", ""),
+)
+
+VIDEO_INDEXER_CLIENT_ID = PersistentConfig(
+    "VIDEO_INDEXER_CLIENT_ID",
+    "video_indexer.client_id",
+    os.getenv("VIDEO_INDEXER_CLIENT_ID", ""),
+)
+
+VIDEO_INDEXER_CLIENT_SECRET = PersistentConfig(
+    "VIDEO_INDEXER_CLIENT_SECRET",
+    "video_indexer.client_secret",
+    os.getenv("VIDEO_INDEXER_CLIENT_SECRET", ""),
+)
+
+VIDEO_INDEXER_INDEXING_PRESET = PersistentConfig(
+    "VIDEO_INDEXER_INDEXING_PRESET",
+    "video_indexer.indexing_preset",
+    os.getenv("VIDEO_INDEXER_INDEXING_PRESET", "Default"),
+)
+
+VIDEO_INDEXER_LANGUAGE = PersistentConfig(
+    "VIDEO_INDEXER_LANGUAGE",
+    "video_indexer.language",
+    os.getenv("VIDEO_INDEXER_LANGUAGE", "en-US"),
+)
+
+
+####################################
 # LDAP
 ####################################
 

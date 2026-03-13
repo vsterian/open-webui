@@ -97,6 +97,7 @@ from open_webui.routers import (
     utils,
     scim,
     terminals,
+    video_indexer,
 )
 
 from open_webui.routers.retrieval import (
@@ -1302,6 +1303,39 @@ app.state.speech_speaker_embeddings_dataset = None
 
 ########################################
 #
+# VIDEO INDEXER
+#
+########################################
+
+from open_webui.config import (
+    VIDEO_INDEXER_ENABLED,
+    VIDEO_INDEXER_ACCOUNT_NAME,
+    VIDEO_INDEXER_ACCOUNT_ID,
+    VIDEO_INDEXER_RESOURCE_GROUP,
+    VIDEO_INDEXER_SUBSCRIPTION_ID,
+    VIDEO_INDEXER_LOCATION,
+    VIDEO_INDEXER_TENANT_ID,
+    VIDEO_INDEXER_CLIENT_ID,
+    VIDEO_INDEXER_CLIENT_SECRET,
+    VIDEO_INDEXER_INDEXING_PRESET,
+    VIDEO_INDEXER_LANGUAGE,
+)
+
+app.state.config.VIDEO_INDEXER_ENABLED = VIDEO_INDEXER_ENABLED
+app.state.config.VIDEO_INDEXER_ACCOUNT_NAME = VIDEO_INDEXER_ACCOUNT_NAME
+app.state.config.VIDEO_INDEXER_ACCOUNT_ID = VIDEO_INDEXER_ACCOUNT_ID
+app.state.config.VIDEO_INDEXER_RESOURCE_GROUP = VIDEO_INDEXER_RESOURCE_GROUP
+app.state.config.VIDEO_INDEXER_SUBSCRIPTION_ID = VIDEO_INDEXER_SUBSCRIPTION_ID
+app.state.config.VIDEO_INDEXER_LOCATION = VIDEO_INDEXER_LOCATION
+app.state.config.VIDEO_INDEXER_TENANT_ID = VIDEO_INDEXER_TENANT_ID
+app.state.config.VIDEO_INDEXER_CLIENT_ID = VIDEO_INDEXER_CLIENT_ID
+app.state.config.VIDEO_INDEXER_CLIENT_SECRET = VIDEO_INDEXER_CLIENT_SECRET
+app.state.config.VIDEO_INDEXER_INDEXING_PRESET = VIDEO_INDEXER_INDEXING_PRESET
+app.state.config.VIDEO_INDEXER_LANGUAGE = VIDEO_INDEXER_LANGUAGE
+
+
+########################################
+#
 # TASKS
 #
 ########################################
@@ -1533,6 +1567,9 @@ app.include_router(tasks.router, prefix="/api/v1/tasks", tags=["tasks"])
 app.include_router(images.router, prefix="/api/v1/images", tags=["images"])
 
 app.include_router(audio.router, prefix="/api/v1/audio", tags=["audio"])
+app.include_router(
+    video_indexer.router, prefix="/api/v1/video-indexer", tags=["video-indexer"]
+)
 app.include_router(retrieval.router, prefix="/api/v1/retrieval", tags=["retrieval"])
 
 app.include_router(configs.router, prefix="/api/v1/configs", tags=["configs"])
