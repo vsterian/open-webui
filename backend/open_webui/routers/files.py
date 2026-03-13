@@ -219,16 +219,41 @@ def _process_video_with_indexer(
         Files.update_file_metadata_by_id(file_item.id, meta, db=db_session)
 
         # 2. Poll until indexing completes
+        log.info(f"Waiting for VI indexing to complete for video_id={video_id}")
         client.wait_for_indexing(video_id, poll_interval=15, timeout=3600)
+        log.info(f"VI indexing complete for video_id={video_id}")
 
         # 3. Fetch insights + transcript
         index_data = client.get_video_index(video_id)
+        log.info(
+            f"VI index_data for video_id={video_id}: "
+            f"state={index_data.get('state')}, "
+            f"num_videos={len(index_data.get('videos', []))}, "
+            f"has_summarizedInsights={'summarizedInsights' in index_data}"
+        )
+
         transcript_text = client.get_transcript(video_id, fmt="txt")
+        log.info(
+            f"VI transcript for video_id={video_id}: "
+            f"{len(transcript_text)} chars"
+        )
+
         structured_content = VideoIndexerClient.extract_structured_content(index_data)
+        log.info(
+            f"VI structured_content for video_id={video_id}: "
+            f"{len(structured_content)} chars"
+        )
 
         # Prefer structured content (transcript + keywords + topics etc.)
         # over raw plain transcript for richer RAG retrieval.
-        final_content = structured_content or transcript_text
+        # If structured_content is empty (no insights extracted), fall back
+        # to the plain transcript from the Captions API.
+        if structured_content:
+            final_content = structured_content
+        elif transcript_text and transcript_text.strip():
+            final_content = f"## Video Transcript\n\n{transcript_text.strip()}"
+        else:
+            final_content = "(No insights or transcript could be extracted from this video)"
 
         # 4. Persist insights in file metadata
         meta["video_indexer"]["state"] = "Processed"

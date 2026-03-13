@@ -151,22 +151,66 @@ class VideoIndexerClient:
         self._vi_token_expiry = now + 1800  # 30 min
         return self._vi_token
 
-    def verify_connection(self) -> dict:
+    def get_account_info(self) -> dict:
         """
-        Verify that the credentials are valid by obtaining a token and
-        listing account-level info.  Returns account metadata on success.
+        Get account details via the ARM endpoint (works for paid accounts).
+
+        This follows the official Azure sample pattern: use the ARM bearer
+        token to query the resource, which returns ``accountId``, ``location``
+        and other metadata.
         """
-        token = self.get_access_token()
+        arm_token = self._get_arm_token()
         url = (
-            f"{API_ENDPOINT}/{self.location}/Accounts/{self.account_id}"
-            f"?accessToken={token}"
+            f"{ARM_ENDPOINT}/subscriptions/{self.subscription_id}"
+            f"/resourceGroups/{self.resource_group}"
+            f"/providers/Microsoft.VideoIndexer/accounts/{self.account_name}"
+            f"?api-version={API_VERSION}"
         )
-        resp = requests.get(url, timeout=30)
+        resp = requests.get(
+            url,
+            headers={
+                "Authorization": f"Bearer {arm_token}",
+                "Content-Type": "application/json",
+            },
+            timeout=30,
+        )
         if resp.status_code != 200:
             raise VideoIndexerError(
-                f"Connection verification failed: {resp.status_code} – {resp.text}"
+                f"Failed to get account info via ARM: {resp.status_code} – {resp.text}"
             )
         return resp.json()
+
+    def verify_connection(self) -> dict:
+        """
+        Verify that the credentials are valid by:
+          1. Getting account info via ARM (validates service principal + resource path)
+          2. Cross-checking the configured account_id against the ARM-discovered one
+          3. Generating a VI access token (validates the full auth chain)
+
+        Works for both trial and paid (ARM-based) accounts.
+        """
+        # Step 1: Get account info via ARM (like official Azure sample)
+        account_info = self.get_account_info()
+        arm_account_id = account_info.get("properties", {}).get("accountId", "")
+        arm_location = account_info.get("location", "")
+
+        # Step 2: Cross-check configured account_id
+        if arm_account_id and self.account_id and arm_account_id != self.account_id:
+            raise VideoIndexerError(
+                f"Account ID mismatch: configured '{self.account_id}' "
+                f"but ARM returned '{arm_account_id}'. "
+                f"Please update your Account ID in settings."
+            )
+
+        # Step 3: Get a VI access token to validate the full auth chain
+        self.get_access_token()
+
+        return {
+            "status": "ok",
+            "account_id": arm_account_id or self.account_id,
+            "location": arm_location or self.location,
+            "account_name": account_info.get("name", self.account_name),
+        }
 
     # ------------------------------------------------------------------
     # Upload
@@ -368,7 +412,10 @@ class VideoIndexerClient:
         Transform the raw Video Indexer index JSON into a structured text
         document suitable for embedding in a RAG pipeline.
 
-        Sections: Transcript, Keywords, Topics, Named Entities, Sentiment.
+        Sections: Transcript, Keywords, Topics, Labels, OCR, Named Entities,
+        Faces, Scenes, Audio Effects, Sentiment.
+
+        Returns an empty string if no insights could be extracted.
         """
         sections = []
         videos = index_data.get("videos", [])
@@ -399,6 +446,29 @@ class VideoIndexerClient:
         if topics:
             sections.append("## Topics\n\n" + ", ".join(topics))
 
+        # -- Labels (visual labels detected in source) --
+        labels = [lb.get("name", "") for lb in summarized.get("labels", [])]
+        if labels:
+            sections.append("## Visual Labels\n\n" + ", ".join(labels))
+
+        # -- OCR (on-screen text) --
+        ocr_lines = []
+        for video in videos:
+            insights = video.get("insights", {})
+            for block in insights.get("ocr", []):
+                text = block.get("text", "").strip()
+                if text:
+                    ocr_lines.append(text)
+        if ocr_lines:
+            # Deduplicate while preserving order
+            seen = set()
+            unique_ocr = []
+            for line in ocr_lines:
+                if line not in seen:
+                    seen.add(line)
+                    unique_ocr.append(line)
+            sections.append("## On-Screen Text (OCR)\n\n" + "\n".join(unique_ocr))
+
         # -- Named Entities --
         entities = []
         for ne in summarized.get("namedLocations", []):
@@ -410,6 +480,37 @@ class VideoIndexerClient:
         if entities:
             sections.append("## Named Entities\n\n" + ", ".join(entities))
 
+        # -- Faces / Speakers --
+        faces = [f.get("name", "") for f in summarized.get("faces", []) if f.get("name")]
+        if faces:
+            sections.append("## Identified Faces\n\n" + ", ".join(faces))
+
+        # -- Scenes --
+        scene_lines = []
+        for video in videos:
+            insights = video.get("insights", {})
+            for scene in insights.get("scenes", []):
+                scene_id = scene.get("id", "")
+                instances = scene.get("instances", [])
+                if instances:
+                    start = instances[0].get("start", "")
+                    end = instances[0].get("end", "")
+                    scene_lines.append(f"Scene {scene_id}: {start} - {end}")
+        if scene_lines:
+            sections.append("## Scenes\n\n" + "\n".join(scene_lines))
+
+        # -- Audio Effects --
+        audio_effects = []
+        for video in videos:
+            insights = video.get("insights", {})
+            for ae in insights.get("audioEffects", []):
+                name = ae.get("audioEffectKey", "") or ae.get("type", "")
+                if name:
+                    audio_effects.append(name)
+        if audio_effects:
+            unique_ae = list(dict.fromkeys(audio_effects))
+            sections.append("## Audio Effects\n\n" + ", ".join(unique_ae))
+
         # -- Sentiment --
         sentiments = summarized.get("sentiments", [])
         if sentiments:
@@ -419,9 +520,6 @@ class VideoIndexerClient:
                 pct = s.get("seenDurationRatio", 0)
                 sent_parts.append(f"{kind}: {pct:.0%}")
             sections.append("## Sentiment\n\n" + " | ".join(sent_parts))
-
-        if not sections:
-            return "(No insights extracted from video)"
 
         return "\n\n".join(sections)
 
