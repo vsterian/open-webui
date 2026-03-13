@@ -6,6 +6,7 @@ Video Indexer REST API for uploading, polling, and retrieving insights.
 """
 
 import logging
+import re
 import time
 import json
 from typing import Optional
@@ -243,7 +244,7 @@ class VideoIndexerClient:
             "privacy": "Private",
             "language": language,
             "indexingPreset": indexing_preset,
-            "streamingPreset": "NoStreaming",
+            "streamingPreset": "Default",
             "sendSuccessEmail": "false",
         }
         if description:
@@ -257,6 +258,27 @@ class VideoIndexerClient:
                 params=params,
                 files={"file": (video_name, video_file)},
                 timeout=600,  # large files may take a while
+            )
+
+        if resp.status_code == 409:
+            # Video already exists – extract video_id from error message
+            # Typical message: "... video id: '<uuid>' ..."
+            error_text = resp.text
+            match = re.search(r"video id:\s*'([^']+)'", error_text, re.IGNORECASE)
+            if not match:
+                match = re.search(
+                    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+                    error_text,
+                    re.IGNORECASE,
+                )
+            if match:
+                existing_id = match.group(1) if match.lastindex else match.group(0)
+                log.info(
+                    f"Video already exists in VI (409): reusing video_id={existing_id}"
+                )
+                return existing_id
+            raise VideoIndexerError(
+                f"Video already exists (409) but could not extract video_id: {error_text}"
             )
 
         if resp.status_code not in (200, 201):

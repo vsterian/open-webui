@@ -218,10 +218,62 @@ def _process_video_with_indexer(
         }
         Files.update_file_metadata_by_id(file_item.id, meta, db=db_session)
 
-        # 2. Poll until indexing completes
-        log.info(f"Waiting for VI indexing to complete for video_id={video_id}")
-        client.wait_for_indexing(video_id, poll_interval=15, timeout=3600)
-        log.info(f"VI indexing complete for video_id={video_id}")
+        # 2. Check if the video is already processed (e.g. 409 duplicate reuse)
+        status_info = client.get_video_status(video_id)
+        current_state = status_info.get("state", "")
+
+        if current_state == "Processed":
+            log.info(f"Video {video_id} already processed — skipping polling")
+            meta["video_indexer"]["progress"] = "100%"
+            meta["video_indexer"]["state"] = "Processed"
+            Files.update_file_metadata_by_id(file_item.id, meta, db=db_session)
+            Files.update_file_data_by_id(
+                file_item.id,
+                {"status": "pending", "progress": "100%"},
+                db=db_session,
+            )
+        else:
+            # Poll until indexing completes, updating progress in file.data
+            log.info(f"Waiting for VI indexing to complete for video_id={video_id}")
+            import time as _time
+
+            poll_interval = 15
+            timeout = 3600
+            start = _time.time()
+            while True:
+                elapsed = _time.time() - start
+                if elapsed > timeout:
+                    raise Exception(
+                        f"Indexing timed out after {timeout}s for video {video_id}"
+                    )
+
+                status_info = client.get_video_status(video_id)
+                state = status_info["state"]
+                progress = status_info.get("processingProgress", "0%")
+                log.info(
+                    f"VI video {video_id}: state={state}, progress={progress}, "
+                    f"elapsed={int(elapsed)}s"
+                )
+
+                # Persist progress so the SSE endpoint can relay it
+                meta["video_indexer"]["state"] = state
+                meta["video_indexer"]["progress"] = progress
+                Files.update_file_metadata_by_id(file_item.id, meta, db=db_session)
+                Files.update_file_data_by_id(
+                    file_item.id,
+                    {"status": "pending", "progress": progress},
+                    db=db_session,
+                )
+
+                if state == "Processed":
+                    log.info(f"VI indexing complete for video_id={video_id}")
+                    break
+                if state == "Failed":
+                    raise Exception(
+                        f"Video indexing failed for {video_id}"
+                    )
+
+                _time.sleep(poll_interval)
 
         # 3. Fetch insights + transcript
         index_data = client.get_video_index(video_id)
@@ -624,6 +676,8 @@ async def get_file_process_status(
 
                         if status:
                             event = {"status": status}
+                            if data.get("progress"):
+                                event["progress"] = data["progress"]
                             if status == "failed":
                                 event["error"] = data.get("error")
 

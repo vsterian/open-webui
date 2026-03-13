@@ -35,6 +35,12 @@
 
 	$: isVideo = contentType?.startsWith('video/') || name?.match(/\.(mp4|avi|mov|mkv|webm|wmv|flv)$/i);
 
+	$: progressPercent = (() => {
+		if (!statusText) return -1;
+		const m = statusText.match(/(\d+)%/);
+		return m ? parseInt(m[1], 10) : -1;
+	})();
+
 	import DocumentPage from '../icons/DocumentPage.svelte';
 	import Database from '../icons/Database.svelte';
 	import PageEdit from '../icons/PageEdit.svelte';
@@ -183,6 +189,14 @@
 						<div class="text-gray-500 text-xs capitalize shrink-0">{type}</div>
 					{/if}
 				</div>
+				{#if progressPercent >= 0}
+					<div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-1 mt-1">
+						<div
+							class="bg-blue-500 h-1 rounded-full transition-all duration-500"
+							style="width: {progressPercent}%"
+						></div>
+					</div>
+				{/if}
 			</div>
 		</Tooltip>
 	{/if}

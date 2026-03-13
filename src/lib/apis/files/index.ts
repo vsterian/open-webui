@@ -5,7 +5,8 @@ export const uploadFile = async (
 	token: string,
 	file: File,
 	metadata?: object | null,
-	process?: boolean | null
+	process?: boolean | null,
+	onProgress?: (progress: string) => void
 ) => {
 	const data = new FormData();
 	data.append('file', file);
@@ -68,6 +69,10 @@ export const uploadFile = async (
 							} else {
 								let data = JSON.parse(line.replace(/^data: /, ''));
 								console.log(data);
+
+								if (data?.progress && onProgress) {
+									onProgress(data.progress);
+								}
 
 								if (data?.error) {
 									console.error(data.error);

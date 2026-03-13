@@ -612,7 +612,16 @@
 				}
 
 				// During the file upload, file content is automatically extracted.
-				const uploadedFile = await uploadFile(localStorage.token, file, metadata, process);
+				const isVideoFile = (file.type.startsWith('video/') || file.name.match(/\.(mp4|avi|mov|mkv|webm)$/i));
+
+				const uploadedFile = await uploadFile(localStorage.token, file, metadata, process,
+					isVideoFile
+						? (progress: string) => {
+								fileItem.statusText = `Indexing video... ${progress}`;
+								files = files;
+							}
+						: undefined
+				);
 
 				if (uploadedFile) {
 					console.log('File upload completed:', {
@@ -1307,7 +1316,7 @@
 												type={file.type}
 												size={file?.size}
 												contentType={file?.content_type ?? ''}
-												statusText={file.status === 'uploading' && (file?.content_type ?? file.name ?? '').match(/video|\.mp4|\.avi|\.mov|\.mkv|\.webm/i) ? $i18n.t('Analyzing video...') : ''}
+												statusText={file.statusText || (file.status === 'uploading' && (file?.content_type ?? file.name ?? '').match(/video|\.mp4|\.avi|\.mov|\.mkv|\.webm/i) ? $i18n.t('Analyzing video...') : '')}
 												loading={file.status === 'uploading'}
 												dismissible={true}
 												edit={true}
