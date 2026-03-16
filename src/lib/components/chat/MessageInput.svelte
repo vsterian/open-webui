@@ -617,7 +617,12 @@
 				const uploadedFile = await uploadFile(localStorage.token, file, metadata, process,
 					isVideoFile
 						? (progress: string) => {
-								fileItem.statusText = `Indexing video... ${progress}`;
+								// Progress can be "Uploading to Video Indexer..." or "45%" etc.
+								if (progress.includes('%')) {
+									fileItem.statusText = `Indexing video... ${progress}`;
+								} else {
+									fileItem.statusText = progress;
+								}
 								files = files;
 							}
 						: undefined

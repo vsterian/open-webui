@@ -311,9 +311,16 @@ class VideoIndexerClient:
                 f"Failed to get video status: {resp.status_code} – {resp.text}"
             )
         data = resp.json()
+        # processingProgress lives at the top level but may be empty;
+        # fall back to videos[0].processingProgress which has the real value.
+        progress = data.get("processingProgress", "")
+        if not progress:
+            videos = data.get("videos", [])
+            if videos:
+                progress = videos[0].get("processingProgress", "")
         return {
             "state": data.get("state", "Unknown"),
-            "processingProgress": data.get("processingProgress", ""),
+            "processingProgress": progress,
         }
 
     def wait_for_indexing(
@@ -544,6 +551,13 @@ class VideoIndexerClient:
             sections.append("## Sentiment\n\n" + " | ".join(sent_parts))
 
         return "\n\n".join(sections)
+
+    def get_player_url(self, video_id: str) -> str:
+        """Return the Video Indexer portal player URL for this video."""
+        return (
+            f"https://www.videoindexer.ai/accounts/{self.account_id}"
+            f"/videos/{video_id}/player"
+        )
 
 
 def build_client_from_config(config) -> VideoIndexerClient:

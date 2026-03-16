@@ -70,7 +70,7 @@ export const uploadFile = async (
 								let data = JSON.parse(line.replace(/^data: /, ''));
 								console.log(data);
 
-								if (data?.progress && onProgress) {
+								if (onProgress && data?.progress !== undefined && data.progress !== '') {
 									onProgress(data.progress);
 								}
 

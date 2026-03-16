@@ -202,6 +202,13 @@ def _process_video_with_indexer(
         )
 
         # 1. Upload to Video Indexer
+        # Notify frontend that upload is in progress
+        Files.update_file_data_by_id(
+            file_item.id,
+            {"status": "pending", "progress": "Uploading to Video Indexer..."},
+            db=db_session,
+        )
+
         video_id = client.upload_video(
             file_path=resolved_path,
             video_name=file_item.filename,
@@ -209,12 +216,16 @@ def _process_video_with_indexer(
             indexing_preset=preset,
         )
 
+        # Build the VI player URL
+        player_url = client.get_player_url(video_id)
+
         # Store VI video_id in file metadata
         meta = file_item.meta if isinstance(file_item.meta, dict) else {}
         meta["video_indexer"] = {
             "video_id": video_id,
             "state": "Processing",
             "progress": "0%",
+            "player_url": player_url,
         }
         Files.update_file_metadata_by_id(file_item.id, meta, db=db_session)
 
@@ -306,6 +317,15 @@ def _process_video_with_indexer(
             final_content = f"## Video Transcript\n\n{transcript_text.strip()}"
         else:
             final_content = "(No insights or transcript could be extracted from this video)"
+
+        # Prepend a "Video Source" section with the VI player URL
+        player_url = client.get_player_url(video_id)
+        source_section = (
+            f"## Video Source\n\n"
+            f"**File:** {file_item.filename}\n"
+            f"**Azure Video Indexer:** {player_url}\n"
+        )
+        final_content = source_section + "\n\n" + final_content
 
         # 4. Persist insights in file metadata
         meta["video_indexer"]["state"] = "Processed"
