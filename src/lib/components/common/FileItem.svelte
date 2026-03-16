@@ -33,7 +33,8 @@
 	export let type: string;
 	export let size: number;
 
-	$: isVideo = contentType?.startsWith('video/') || name?.match(/\.(mp4|avi|mov|mkv|webm|wmv|flv)$/i);
+	$: isMedia = contentType?.startsWith('video/') || contentType?.startsWith('audio/') || name?.match(/\.(mp4|avi|mov|mkv|webm|wmv|flv|mp3|wav|ogg|flac|m4a|aac|wma)$/i);
+	$: isVideo = isMedia;
 
 	$: progressPercent = (() => {
 		if (!statusText) return -1;
@@ -57,6 +58,17 @@
 		}
 	};
 </script>
+
+<style>
+	@keyframes indeterminate {
+		0% { transform: translateX(-100%); }
+		100% { transform: translateX(500%); }
+	}
+	.progress-indeterminate {
+		width: 25%;
+		animation: indeterminate 1.4s ease-in-out infinite;
+	}
+</style>
 
 {#if item}
 	<FileItemModal bind:show={showModal} bind:item {edit} />
@@ -195,6 +207,10 @@
 							class="bg-blue-500 h-1 rounded-full transition-all duration-500"
 							style="width: {progressPercent}%"
 						></div>
+					</div>
+				{:else if loading && statusText}
+					<div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-1 mt-1 overflow-hidden">
+						<div class="progress-indeterminate bg-blue-500 h-1 rounded-full"></div>
 					</div>
 				{/if}
 			</div>

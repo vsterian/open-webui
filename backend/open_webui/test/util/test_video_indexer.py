@@ -155,23 +155,35 @@ class TestAuthentication:
 # ──────────────────────────────────────────────
 
 class TestVerifyConnection:
+    @patch("open_webui.utils.video_indexer.requests.post")
     @patch("open_webui.utils.video_indexer.requests.get")
-    def test_verify_success(self, mock_get):
+    def test_verify_success(self, mock_get, mock_post):
         client = _make_client()
-        _mock_vi_token(client)
+        _mock_arm_token(client)
 
         mock_resp = MagicMock()
         mock_resp.status_code = 200
-        mock_resp.json.return_value = {"id": "acct-id", "name": "My Account"}
+        mock_resp.json.return_value = {
+            "name": "My Account",
+            "location": "eastus",
+            "properties": {"accountId": "00000000-0000-0000-0000-000000000000"},
+        }
         mock_get.return_value = mock_resp
 
+        mock_token_resp = MagicMock()
+        mock_token_resp.status_code = 200
+        mock_token_resp.json.return_value = {"accessToken": "vi-token-123"}
+        mock_post.return_value = mock_token_resp
+
         result = client.verify_connection()
-        assert result["name"] == "My Account"
+        assert result["status"] == "ok"
+        assert result["account_name"] == "My Account"
+        assert result["account_id"] == "00000000-0000-0000-0000-000000000000"
 
     @patch("open_webui.utils.video_indexer.requests.get")
     def test_verify_failure(self, mock_get):
         client = _make_client()
-        _mock_vi_token(client)
+        _mock_arm_token(client)
 
         mock_resp = MagicMock()
         mock_resp.status_code = 401
@@ -484,7 +496,7 @@ class TestExtractStructuredContent:
 
     def test_empty_index(self):
         result = VideoIndexerClient.extract_structured_content({})
-        assert result == "(No insights extracted from video)"
+        assert result == ""
 
     def test_transcript_only(self):
         index_data = {

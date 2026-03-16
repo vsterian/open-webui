@@ -11,10 +11,10 @@ from pydantic import BaseModel
 from open_webui.models.files import Files
 from open_webui.utils.auth import get_admin_user, get_verified_user
 from open_webui.utils.video_indexer import (
-    VideoIndexerClient,
     VideoIndexerError,
     build_client_from_config,
 )
+from open_webui.utils.soniox import SonioxError, build_soniox_client_from_config
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -27,6 +27,7 @@ router = APIRouter()
 
 class VideoIndexerConfigForm(BaseModel):
     ENABLED: bool = False
+    PROVIDER: str = "azure_video_indexer"
     ACCOUNT_NAME: str = ""
     ACCOUNT_ID: str = ""
     RESOURCE_GROUP: str = ""
@@ -37,6 +38,11 @@ class VideoIndexerConfigForm(BaseModel):
     CLIENT_SECRET: str = ""
     INDEXING_PRESET: str = "Default"
     LANGUAGE: str = "en-US"
+    SONIOX_API_KEY: str = ""
+    SONIOX_BASE_URL: str = "https://api.soniox.com/v1"
+    SONIOX_MODEL: str = "stt-async-v4"
+    SONIOX_ENABLE_LANGUAGE_IDENTIFICATION: bool = True
+    SONIOX_LANGUAGE_HINTS: list[str] = []
 
 
 # ──────────────────────────────────────────────
@@ -48,6 +54,7 @@ class VideoIndexerConfigForm(BaseModel):
 async def get_video_indexer_config(request: Request, user=Depends(get_admin_user)):
     return {
         "ENABLED": request.app.state.config.VIDEO_INDEXER_ENABLED,
+        "PROVIDER": request.app.state.config.VIDEO_INDEXER_PROVIDER,
         "ACCOUNT_NAME": request.app.state.config.VIDEO_INDEXER_ACCOUNT_NAME,
         "ACCOUNT_ID": request.app.state.config.VIDEO_INDEXER_ACCOUNT_ID,
         "RESOURCE_GROUP": request.app.state.config.VIDEO_INDEXER_RESOURCE_GROUP,
@@ -58,6 +65,11 @@ async def get_video_indexer_config(request: Request, user=Depends(get_admin_user
         "CLIENT_SECRET": request.app.state.config.VIDEO_INDEXER_CLIENT_SECRET,
         "INDEXING_PRESET": request.app.state.config.VIDEO_INDEXER_INDEXING_PRESET,
         "LANGUAGE": request.app.state.config.VIDEO_INDEXER_LANGUAGE,
+        "SONIOX_API_KEY": request.app.state.config.SONIOX_API_KEY,
+        "SONIOX_BASE_URL": request.app.state.config.SONIOX_BASE_URL,
+        "SONIOX_MODEL": request.app.state.config.SONIOX_MODEL,
+        "SONIOX_ENABLE_LANGUAGE_IDENTIFICATION": request.app.state.config.SONIOX_ENABLE_LANGUAGE_IDENTIFICATION,
+        "SONIOX_LANGUAGE_HINTS": request.app.state.config.SONIOX_LANGUAGE_HINTS,
     }
 
 
@@ -68,6 +80,7 @@ async def update_video_indexer_config(
     user=Depends(get_admin_user),
 ):
     request.app.state.config.VIDEO_INDEXER_ENABLED = form_data.ENABLED
+    request.app.state.config.VIDEO_INDEXER_PROVIDER = form_data.PROVIDER
     request.app.state.config.VIDEO_INDEXER_ACCOUNT_NAME = form_data.ACCOUNT_NAME
     request.app.state.config.VIDEO_INDEXER_ACCOUNT_ID = form_data.ACCOUNT_ID
     request.app.state.config.VIDEO_INDEXER_RESOURCE_GROUP = form_data.RESOURCE_GROUP
@@ -78,9 +91,17 @@ async def update_video_indexer_config(
     request.app.state.config.VIDEO_INDEXER_CLIENT_SECRET = form_data.CLIENT_SECRET
     request.app.state.config.VIDEO_INDEXER_INDEXING_PRESET = form_data.INDEXING_PRESET
     request.app.state.config.VIDEO_INDEXER_LANGUAGE = form_data.LANGUAGE
+    request.app.state.config.SONIOX_API_KEY = form_data.SONIOX_API_KEY
+    request.app.state.config.SONIOX_BASE_URL = form_data.SONIOX_BASE_URL
+    request.app.state.config.SONIOX_MODEL = form_data.SONIOX_MODEL
+    request.app.state.config.SONIOX_ENABLE_LANGUAGE_IDENTIFICATION = (
+        form_data.SONIOX_ENABLE_LANGUAGE_IDENTIFICATION
+    )
+    request.app.state.config.SONIOX_LANGUAGE_HINTS = form_data.SONIOX_LANGUAGE_HINTS
 
     return {
         "ENABLED": request.app.state.config.VIDEO_INDEXER_ENABLED,
+        "PROVIDER": request.app.state.config.VIDEO_INDEXER_PROVIDER,
         "ACCOUNT_NAME": request.app.state.config.VIDEO_INDEXER_ACCOUNT_NAME,
         "ACCOUNT_ID": request.app.state.config.VIDEO_INDEXER_ACCOUNT_ID,
         "RESOURCE_GROUP": request.app.state.config.VIDEO_INDEXER_RESOURCE_GROUP,
@@ -91,6 +112,11 @@ async def update_video_indexer_config(
         "CLIENT_SECRET": request.app.state.config.VIDEO_INDEXER_CLIENT_SECRET,
         "INDEXING_PRESET": request.app.state.config.VIDEO_INDEXER_INDEXING_PRESET,
         "LANGUAGE": request.app.state.config.VIDEO_INDEXER_LANGUAGE,
+        "SONIOX_API_KEY": request.app.state.config.SONIOX_API_KEY,
+        "SONIOX_BASE_URL": request.app.state.config.SONIOX_BASE_URL,
+        "SONIOX_MODEL": request.app.state.config.SONIOX_MODEL,
+        "SONIOX_ENABLE_LANGUAGE_IDENTIFICATION": request.app.state.config.SONIOX_ENABLE_LANGUAGE_IDENTIFICATION,
+        "SONIOX_LANGUAGE_HINTS": request.app.state.config.SONIOX_LANGUAGE_HINTS,
     }
 
 
@@ -105,10 +131,18 @@ async def verify_video_indexer_connection(
 ):
     """Test that the current config can authenticate and reach VI."""
     try:
-        client = build_client_from_config(request.app.state.config)
+        provider = getattr(
+            request.app.state.config,
+            "VIDEO_INDEXER_PROVIDER",
+            "azure_video_indexer",
+        )
+        if provider == "soniox":
+            client = build_soniox_client_from_config(request.app.state.config)
+        else:
+            client = build_client_from_config(request.app.state.config)
         info = client.verify_connection()
-        return {"status": "ok", "account": info}
-    except VideoIndexerError as exc:
+        return {"status": "ok", "provider": provider, "account": info}
+    except (VideoIndexerError, SonioxError) as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(exc),
@@ -136,12 +170,20 @@ async def get_video_indexer_status(
         raise HTTPException(status_code=404, detail="File not found")
 
     meta = file.meta or {}
-    vi_meta = meta.get("video_indexer", {})
+    provider = meta.get("analyzer_provider") or "azure_video_indexer"
+    analyzer_meta = meta.get("analyzer", {})
+
+    if not analyzer_meta:
+        analyzer_meta = meta.get("video_indexer", {})
+        provider = "azure_video_indexer"
+
     return {
         "file_id": file_id,
-        "video_id": vi_meta.get("video_id"),
-        "state": vi_meta.get("state", "unknown"),
-        "progress": vi_meta.get("progress", ""),
+        "provider": provider,
+        "video_id": analyzer_meta.get("video_id"),
+        "transcription_id": analyzer_meta.get("transcription_id"),
+        "state": analyzer_meta.get("state", "unknown"),
+        "progress": analyzer_meta.get("progress", ""),
     }
 
 
@@ -155,8 +197,8 @@ async def get_video_indexer_insights(
         raise HTTPException(status_code=404, detail="File not found")
 
     meta = file.meta or {}
-    vi_meta = meta.get("video_indexer", {})
-    insights = vi_meta.get("insights")
+    analyzer_meta = meta.get("analyzer") or meta.get("video_indexer", {})
+    insights = analyzer_meta.get("insights")
     if not insights:
         raise HTTPException(status_code=404, detail="No insights available yet")
     return insights
@@ -189,6 +231,10 @@ async def search_video_indexer(
     """Proxy search to the VI account."""
     if not request.app.state.config.VIDEO_INDEXER_ENABLED:
         raise HTTPException(status_code=400, detail="Video Indexer is not enabled")
+
+    if getattr(request.app.state.config, "VIDEO_INDEXER_PROVIDER", "azure_video_indexer") != "azure_video_indexer":
+        raise HTTPException(status_code=400, detail="Search is only supported for Azure Video Indexer provider")
+
     try:
         client = build_client_from_config(request.app.state.config)
         results = client.search_videos(query, page_size=page_size, skip=skip)

@@ -4223,6 +4223,12 @@ VIDEO_INDEXER_ENABLED = PersistentConfig(
     os.environ.get("VIDEO_INDEXER_ENABLED", "false").lower() == "true",
 )
 
+VIDEO_INDEXER_PROVIDER = PersistentConfig(
+    "VIDEO_INDEXER_PROVIDER",
+    "video_indexer.provider",
+    os.getenv("VIDEO_INDEXER_PROVIDER", "azure_video_indexer"),
+)
+
 VIDEO_INDEXER_ACCOUNT_NAME = PersistentConfig(
     "VIDEO_INDEXER_ACCOUNT_NAME",
     "video_indexer.account_name",
@@ -4281,6 +4287,40 @@ VIDEO_INDEXER_LANGUAGE = PersistentConfig(
     "VIDEO_INDEXER_LANGUAGE",
     "video_indexer.language",
     os.getenv("VIDEO_INDEXER_LANGUAGE", "en-US"),
+)
+
+SONIOX_API_KEY = PersistentConfig(
+    "SONIOX_API_KEY",
+    "video_indexer.soniox.api_key",
+    os.getenv("SONIOX_API_KEY", ""),
+)
+
+SONIOX_BASE_URL = PersistentConfig(
+    "SONIOX_BASE_URL",
+    "video_indexer.soniox.base_url",
+    os.getenv("SONIOX_BASE_URL", "https://api.soniox.com/v1"),
+)
+
+SONIOX_MODEL = PersistentConfig(
+    "SONIOX_MODEL",
+    "video_indexer.soniox.model",
+    os.getenv("SONIOX_MODEL", "stt-async-v4"),
+)
+
+SONIOX_ENABLE_LANGUAGE_IDENTIFICATION = PersistentConfig(
+    "SONIOX_ENABLE_LANGUAGE_IDENTIFICATION",
+    "video_indexer.soniox.enable_language_identification",
+    os.getenv("SONIOX_ENABLE_LANGUAGE_IDENTIFICATION", "true").lower() == "true",
+)
+
+SONIOX_LANGUAGE_HINTS = PersistentConfig(
+    "SONIOX_LANGUAGE_HINTS",
+    "video_indexer.soniox.language_hints",
+    [
+        item.strip()
+        for item in os.getenv("SONIOX_LANGUAGE_HINTS", "").split(",")
+        if item.strip()
+    ],
 )
 
 

@@ -55,6 +55,7 @@ from open_webui.utils.video_indexer import (
     VideoIndexerError,
     build_client_from_config,
 )
+from open_webui.utils.soniox import SonioxError, build_soniox_client_from_config
 from pydantic import BaseModel
 
 log = logging.getLogger(__name__)
@@ -112,8 +113,30 @@ def process_uploaded_file(
                 stt_supported_content_types = getattr(
                     request.app.state.config, "STT_SUPPORTED_CONTENT_TYPES", []
                 )
+                analyzer_enabled = getattr(
+                    request.app.state.config,
+                    "VIDEO_INDEXER_ENABLED",
+                    False,
+                )
+                analyzer_provider = getattr(
+                    request.app.state.config,
+                    "VIDEO_INDEXER_PROVIDER",
+                    "azure_video_indexer",
+                )
 
-                if strict_match_mime_type(stt_supported_content_types, content_type):
+                if analyzer_enabled and content_type.startswith(("video/", "audio/")):
+                    _process_media_with_analyzer(
+                        request=request,
+                        file_item=file_item,
+                        file_path=file_path,
+                        file_metadata=file_metadata,
+                        user=user,
+                        db_session=db_session,
+                        content_type=content_type,
+                        provider=analyzer_provider,
+                    )
+
+                elif strict_match_mime_type(stt_supported_content_types, content_type):
                     file_path_processed = Storage.get_file(file_path)
                     result = transcribe(
                         request, file_path_processed, file_metadata, user
@@ -126,17 +149,6 @@ def process_uploaded_file(
                         ),
                         user=user,
                         db=db_session,
-                    )
-                elif (
-                    content_type.startswith("video/")
-                    and getattr(
-                        request.app.state.config,
-                        "VIDEO_INDEXER_ENABLED",
-                        False,
-                    )
-                ):
-                    _process_video_with_indexer(
-                        request, file_item, file_path, file_metadata, user, db_session
                     )
                 elif (not content_type.startswith(("image/", "video/"))) or (
                     request.app.state.config.CONTENT_EXTRACTION_ENGINE == "external"
@@ -181,7 +193,7 @@ def process_uploaded_file(
 
 
 def _process_video_with_indexer(
-    request, file_item, file_path, file_metadata, user, db_session
+    request, file_item, file_path, file_metadata, user, db_session, media_type="video"
 ):
     """
     Upload a video to Azure AI Video Indexer, poll until processed,
@@ -197,9 +209,9 @@ def _process_video_with_indexer(
             or request.app.state.config.VIDEO_INDEXER_LANGUAGE
             or "en-US"
         )
-        preset = (
-            request.app.state.config.VIDEO_INDEXER_INDEXING_PRESET or "Default"
-        )
+        preset = request.app.state.config.VIDEO_INDEXER_INDEXING_PRESET or "Default"
+        if media_type == "audio":
+            preset = "AudioOnly"
 
         # 1. Upload to Video Indexer
         # Notify frontend that upload is in progress
@@ -221,6 +233,14 @@ def _process_video_with_indexer(
 
         # Store VI video_id in file metadata
         meta = file_item.meta if isinstance(file_item.meta, dict) else {}
+        meta["analyzer_provider"] = "azure_video_indexer"
+        meta["analyzer"] = {
+            "provider": "azure_video_indexer",
+            "video_id": video_id,
+            "state": "Processing",
+            "progress": "0%",
+            "player_url": player_url,
+        }
         meta["video_indexer"] = {
             "video_id": video_id,
             "state": "Processing",
@@ -237,6 +257,8 @@ def _process_video_with_indexer(
             log.info(f"Video {video_id} already processed — skipping polling")
             meta["video_indexer"]["progress"] = "100%"
             meta["video_indexer"]["state"] = "Processed"
+            meta["analyzer"]["progress"] = "100%"
+            meta["analyzer"]["state"] = "Processed"
             Files.update_file_metadata_by_id(file_item.id, meta, db=db_session)
             Files.update_file_data_by_id(
                 file_item.id,
@@ -269,6 +291,8 @@ def _process_video_with_indexer(
                 # Persist progress so the SSE endpoint can relay it
                 meta["video_indexer"]["state"] = state
                 meta["video_indexer"]["progress"] = progress
+                meta["analyzer"]["state"] = state
+                meta["analyzer"]["progress"] = progress
                 Files.update_file_metadata_by_id(file_item.id, meta, db=db_session)
                 Files.update_file_data_by_id(
                     file_item.id,
@@ -331,6 +355,9 @@ def _process_video_with_indexer(
         meta["video_indexer"]["state"] = "Processed"
         meta["video_indexer"]["progress"] = "100%"
         meta["video_indexer"]["insights"] = index_data.get("summarizedInsights", {})
+        meta["analyzer"]["state"] = "Processed"
+        meta["analyzer"]["progress"] = "100%"
+        meta["analyzer"]["insights"] = index_data.get("summarizedInsights", {})
         Files.update_file_metadata_by_id(file_item.id, meta, db=db_session)
 
         # 5. Send the extracted text through the RAG pipeline
@@ -352,6 +379,11 @@ def _process_video_with_indexer(
         log.error(f"Video Indexer error for file {file_item.id}: {exc}")
         # Update metadata with failure state
         meta = file_item.meta if isinstance(file_item.meta, dict) else {}
+        analyzer = meta.get("analyzer", {})
+        analyzer["provider"] = "azure_video_indexer"
+        analyzer["state"] = "Failed"
+        analyzer["error"] = str(exc)
+        meta["analyzer"] = analyzer
         vi = meta.get("video_indexer", {})
         vi["state"] = "Failed"
         vi["error"] = str(exc)
@@ -362,12 +394,150 @@ def _process_video_with_indexer(
     except Exception as exc:
         log.error(f"Unexpected error in Video Indexer for file {file_item.id}: {exc}")
         meta = file_item.meta if isinstance(file_item.meta, dict) else {}
+        analyzer = meta.get("analyzer", {})
+        analyzer["provider"] = "azure_video_indexer"
+        analyzer["state"] = "Failed"
+        analyzer["error"] = str(exc)
+        meta["analyzer"] = analyzer
         vi = meta.get("video_indexer", {})
         vi["state"] = "Failed"
         vi["error"] = str(exc)
         meta["video_indexer"] = vi
         Files.update_file_metadata_by_id(file_item.id, meta, db=db_session)
         raise
+
+
+def _process_media_with_soniox(
+    request, file_item, file_path, file_metadata, user, db_session
+):
+    try:
+        client = build_soniox_client_from_config(request.app.state.config)
+        resolved_path = Storage.get_file(file_path)
+
+        Files.update_file_data_by_id(
+            file_item.id,
+            {"status": "pending", "progress": "Uploading to Soniox..."},
+            db=db_session,
+        )
+
+        def _on_soniox_progress(status_value, progress, elapsed):
+            if progress is not None:
+                progress_str = f"{progress}%"
+            elif status_value == "queued":
+                progress_str = "Queued for transcription..."
+            else:
+                progress_str = f"Transcribing... ({int(elapsed)}s)"
+            log.info(
+                f"Soniox transcription {file_item.id}: status={status_value}, "
+                f"progress={progress_str}, elapsed={int(elapsed)}s"
+            )
+            meta = file_item.meta if isinstance(file_item.meta, dict) else {}
+            analyzer = meta.get("analyzer", {})
+            analyzer["state"] = status_value.capitalize()
+            analyzer["progress"] = progress_str
+            meta["analyzer"] = analyzer
+            Files.update_file_metadata_by_id(file_item.id, meta, db=db_session)
+            Files.update_file_data_by_id(
+                file_item.id,
+                {"status": "pending", "progress": progress_str},
+                db=db_session,
+            )
+
+        result = client.transcribe_file(
+            file_path=resolved_path,
+            filename=file_item.filename,
+            client_reference_id=file_item.id,
+            poll_interval=10,
+            timeout=3600,
+            on_progress=_on_soniox_progress,
+        )
+
+        transcript_text = result.get("text") or ""
+        if not transcript_text:
+            transcript_text = "(No transcript returned by Soniox)"
+
+        language_info = result.get("languages") or []
+        language_label = ", ".join(language_info) if language_info else "unknown"
+
+        final_content = (
+            f"[Source: {file_item.filename} | Provider: Soniox | Languages: {language_label}]\n\n"
+            f"{transcript_text}"
+        )
+
+        meta = file_item.meta if isinstance(file_item.meta, dict) else {}
+        meta["analyzer_provider"] = "soniox"
+        meta["analyzer"] = {
+            "provider": "soniox",
+            "file_id": result.get("file_id"),
+            "transcription_id": result.get("transcription_id"),
+            "state": str(result.get("status", "completed")).capitalize(),
+            "progress": "100%",
+            "insights": {
+                "languages": language_info,
+                "tokens": result.get("tokens") or [],
+                "transcription": result.get("transcription") or {},
+                "transcript": result.get("transcript") or {},
+            },
+        }
+        Files.update_file_metadata_by_id(file_item.id, meta, db=db_session)
+
+        process_file(
+            request,
+            ProcessFileForm(
+                file_id=file_item.id,
+                content=final_content,
+            ),
+            user=user,
+            db=db_session,
+        )
+        log.info(
+            f"Soniox processing complete for file {file_item.id} "
+            f"(transcription_id={result.get('transcription_id')})"
+        )
+    except SonioxError as exc:
+        log.error(f"Soniox error for file {file_item.id}: {exc}")
+        meta = file_item.meta if isinstance(file_item.meta, dict) else {}
+        meta["analyzer_provider"] = "soniox"
+        analyzer = meta.get("analyzer", {})
+        analyzer["provider"] = "soniox"
+        analyzer["state"] = "Failed"
+        analyzer["error"] = str(exc)
+        meta["analyzer"] = analyzer
+        Files.update_file_metadata_by_id(file_item.id, meta, db=db_session)
+        raise Exception(f"Soniox processing failed: {exc}")
+
+
+def _process_media_with_analyzer(
+    request,
+    file_item,
+    file_path,
+    file_metadata,
+    user,
+    db_session,
+    content_type,
+    provider,
+):
+    if provider == "soniox":
+        _process_media_with_soniox(
+            request,
+            file_item,
+            file_path,
+            file_metadata,
+            user,
+            db_session,
+        )
+        return
+
+    media_type = "audio" if content_type.startswith("audio/") else "video"
+    _process_video_with_indexer(
+        request,
+        file_item,
+        file_path,
+        file_metadata,
+        user,
+        db_session,
+        media_type=media_type,
+    )
 
 
 @router.post("/", response_model=FileModelResponse)

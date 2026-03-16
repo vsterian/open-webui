@@ -33,6 +33,10 @@ describe('Admin Settings - Video Indexer', () => {
 			cy.contains('Enable Video Indexer').should('be.visible');
 		});
 
+		it('shows analyzer provider selector', () => {
+			cy.contains('Analyzer Provider').should('be.visible');
+		});
+
 		it('shows Azure Subscription fields', () => {
 			cy.contains('Subscription ID').should('be.visible');
 			cy.contains('Resource Group').should('be.visible');
@@ -53,6 +57,13 @@ describe('Admin Settings - Video Indexer', () => {
 		it('shows Indexing Settings', () => {
 			cy.contains('Indexing Preset').should('be.visible');
 			cy.contains('Language').should('be.visible');
+		});
+
+		it('shows Soniox settings fields', () => {
+			cy.contains('Soniox Settings').should('be.visible');
+			cy.contains('Soniox API Key').should('be.visible');
+			cy.contains('Soniox Base URL').should('be.visible');
+			cy.contains('Soniox Model').should('be.visible');
 		});
 
 		it('admin can fill and save Video Indexer settings', () => {

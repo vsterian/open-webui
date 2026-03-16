@@ -1,0 +1,13 @@
+{
+
+    "servers": {
+      "soniox-docs": {
+        "command": "npx",
+        "args": [
+          "-y",
+          "mcp-remote",
+          "https://soniox.com/docs/api/mcp/mcp"
+        ]
+      }
+    }
+  }

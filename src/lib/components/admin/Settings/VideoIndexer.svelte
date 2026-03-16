@@ -23,6 +23,7 @@
 
 	// Config fields
 	let ENABLED = false;
+	let PROVIDER = 'azure_video_indexer';
 	let ACCOUNT_NAME = '';
 	let ACCOUNT_ID = '';
 	let RESOURCE_GROUP = '';
@@ -33,6 +34,16 @@
 	let CLIENT_SECRET = '';
 	let INDEXING_PRESET = 'Default';
 	let LANGUAGE = 'en-US';
+	let SONIOX_API_KEY = '';
+	let SONIOX_BASE_URL = 'https://api.soniox.com/v1';
+	let SONIOX_MODEL = 'stt-async-v4';
+	let SONIOX_ENABLE_LANGUAGE_IDENTIFICATION = true;
+	let SONIOX_LANGUAGE_HINTS = '';
+
+	const PROVIDER_OPTIONS = [
+		{ value: 'azure_video_indexer', label: 'Azure Video Indexer' },
+		{ value: 'soniox', label: 'Soniox' }
+	];
 
 	const PRESET_OPTIONS = [
 		'Default',
@@ -103,6 +114,7 @@
 			const config = await getVideoIndexerConfig(localStorage.token);
 			if (config) {
 				ENABLED = config.ENABLED ?? false;
+				PROVIDER = config.PROVIDER ?? 'azure_video_indexer';
 				ACCOUNT_NAME = config.ACCOUNT_NAME ?? '';
 				ACCOUNT_ID = config.ACCOUNT_ID ?? '';
 				RESOURCE_GROUP = config.RESOURCE_GROUP ?? '';
@@ -113,6 +125,12 @@
 				CLIENT_SECRET = config.CLIENT_SECRET ?? '';
 				INDEXING_PRESET = config.INDEXING_PRESET ?? 'Default';
 				LANGUAGE = config.LANGUAGE ?? 'en-US';
+				SONIOX_API_KEY = config.SONIOX_API_KEY ?? '';
+				SONIOX_BASE_URL = config.SONIOX_BASE_URL ?? 'https://api.soniox.com/v1';
+				SONIOX_MODEL = config.SONIOX_MODEL ?? 'stt-async-v4';
+				SONIOX_ENABLE_LANGUAGE_IDENTIFICATION =
+					config.SONIOX_ENABLE_LANGUAGE_IDENTIFICATION ?? true;
+				SONIOX_LANGUAGE_HINTS = (config.SONIOX_LANGUAGE_HINTS ?? []).join(', ');
 			}
 		} catch (e) {
 			toast.error(`Failed to load Video Indexer config: ${e}`);
@@ -124,6 +142,7 @@
 		try {
 			await updateVideoIndexerConfig(localStorage.token, {
 				ENABLED,
+				PROVIDER,
 				ACCOUNT_NAME,
 				ACCOUNT_ID,
 				RESOURCE_GROUP,
@@ -133,7 +152,15 @@
 				CLIENT_ID,
 				CLIENT_SECRET,
 				INDEXING_PRESET,
-				LANGUAGE
+				LANGUAGE,
+				SONIOX_API_KEY,
+				SONIOX_BASE_URL,
+				SONIOX_MODEL,
+				SONIOX_ENABLE_LANGUAGE_IDENTIFICATION,
+				SONIOX_LANGUAGE_HINTS: SONIOX_LANGUAGE_HINTS
+					.split(',')
+					.map((item) => item.trim())
+					.filter(Boolean)
 			});
 			saveHandler();
 		} catch (e) {
@@ -184,7 +211,7 @@
 						</div>
 						<div class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
 							{$i18n.t(
-								'Upload videos in chat to automatically extract transcripts, keywords, topics, entities, and sentiment using Azure AI Video Indexer.'
+								'Upload video or audio in chat and route processing to Azure Video Indexer or Soniox based on the selected provider.'
 							)}
 						</div>
 					</div>
@@ -214,6 +241,18 @@
 
 				{#if ENABLED}
 					<hr class="border-gray-100 dark:border-gray-850" />
+
+					<div>
+						<div class="text-xs font-medium mb-1">{$i18n.t('Analyzer Provider')}</div>
+						<select
+							class="w-full rounded-lg py-2 px-4 text-sm bg-gray-50 dark:text-gray-300 dark:bg-gray-850 outline-hidden"
+							bind:value={PROVIDER}
+						>
+							{#each PROVIDER_OPTIONS as option}
+								<option value={option.value}>{option.label}</option>
+							{/each}
+						</select>
+					</div>
 
 					<!-- Azure Subscription -->
 					<div class="space-y-3">
@@ -383,6 +422,67 @@
 							</select>
 							<div class="text-xs text-gray-400 mt-0.5">
 								{$i18n.t('Use "multi" for automatic multi-language detection.')}
+							</div>
+						</div>
+					</div>
+
+					<hr class="border-gray-100 dark:border-gray-850" />
+
+					<div class="space-y-3">
+						<div class="text-sm font-medium text-gray-700 dark:text-gray-300">
+							{$i18n.t('Soniox Settings')}
+						</div>
+
+						<div>
+							<div class="text-xs font-medium mb-1">{$i18n.t('Soniox API Key')}</div>
+							<SensitiveInput placeholder="Enter Soniox API key..." bind:value={SONIOX_API_KEY} />
+						</div>
+
+						<div>
+							<div class="text-xs font-medium mb-1">{$i18n.t('Soniox Base URL')}</div>
+							<input
+								class="w-full rounded-lg py-2 px-4 text-sm bg-gray-50 dark:text-gray-300 dark:bg-gray-850 outline-hidden"
+								bind:value={SONIOX_BASE_URL}
+							/>
+						</div>
+
+						<div>
+							<div class="text-xs font-medium mb-1">{$i18n.t('Soniox Model')}</div>
+							<input
+								class="w-full rounded-lg py-2 px-4 text-sm bg-gray-50 dark:text-gray-300 dark:bg-gray-850 outline-hidden"
+								bind:value={SONIOX_MODEL}
+							/>
+						</div>
+
+						<div class="flex items-center justify-between">
+							<div class="text-xs font-medium">{$i18n.t('Enable Soniox Language Identification')}</div>
+							<button
+								type="button"
+								class="relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out {SONIOX_ENABLE_LANGUAGE_IDENTIFICATION
+									? 'bg-blue-600'
+									: 'bg-gray-200 dark:bg-gray-700'}"
+								role="switch"
+								aria-checked={SONIOX_ENABLE_LANGUAGE_IDENTIFICATION}
+								on:click={() =>
+									(SONIOX_ENABLE_LANGUAGE_IDENTIFICATION = !SONIOX_ENABLE_LANGUAGE_IDENTIFICATION)}
+							>
+								<span
+									class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out {SONIOX_ENABLE_LANGUAGE_IDENTIFICATION
+										? 'translate-x-5'
+										: 'translate-x-0'}"
+								/>
+							</button>
+						</div>
+
+						<div>
+							<div class="text-xs font-medium mb-1">{$i18n.t('Soniox Language Hints')}</div>
+							<input
+								class="w-full rounded-lg py-2 px-4 text-sm bg-gray-50 dark:text-gray-300 dark:bg-gray-850 outline-hidden"
+								placeholder="ro, en"
+								bind:value={SONIOX_LANGUAGE_HINTS}
+							/>
+							<div class="text-xs text-gray-400 mt-0.5">
+								{$i18n.t('Comma-separated ISO language codes, e.g. ro, en.')}
 							</div>
 						</div>
 					</div>

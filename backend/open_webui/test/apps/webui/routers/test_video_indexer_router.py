@@ -38,8 +38,6 @@ _heavy_modules = [
     "open_webui.models.groups",
     # Config / env (massive import tree)
     "open_webui.env",
-    # MSAL for video_indexer client
-    "msal",
 ]
 
 for mod_name in _heavy_modules:
@@ -77,6 +75,7 @@ def _create_test_app(config_overrides: dict = None) -> FastAPI:
     # Set up mock config on app state
     defaults = {
         "VIDEO_INDEXER_ENABLED": False,
+        "VIDEO_INDEXER_PROVIDER": "azure_video_indexer",
         "VIDEO_INDEXER_ACCOUNT_NAME": "test-acct",
         "VIDEO_INDEXER_ACCOUNT_ID": "acct-000",
         "VIDEO_INDEXER_RESOURCE_GROUP": "test-rg",
@@ -87,6 +86,11 @@ def _create_test_app(config_overrides: dict = None) -> FastAPI:
         "VIDEO_INDEXER_CLIENT_SECRET": "secret-444",
         "VIDEO_INDEXER_INDEXING_PRESET": "Default",
         "VIDEO_INDEXER_LANGUAGE": "en-US",
+        "SONIOX_API_KEY": "",
+        "SONIOX_BASE_URL": "https://api.soniox.com/v1",
+        "SONIOX_MODEL": "stt-async-v4",
+        "SONIOX_ENABLE_LANGUAGE_IDENTIFICATION": True,
+        "SONIOX_LANGUAGE_HINTS": [],
     }
     if config_overrides:
         defaults.update(config_overrides)
@@ -117,14 +121,17 @@ class TestConfigEndpoints:
         assert resp.status_code == 200
         data = resp.json()
         assert data["ENABLED"] is False
+        assert data["PROVIDER"] == "azure_video_indexer"
         assert data["ACCOUNT_NAME"] == "test-acct"
         assert data["LOCATION"] == "eastus"
         assert data["INDEXING_PRESET"] == "Default"
         assert data["LANGUAGE"] == "en-US"
+        assert data["SONIOX_MODEL"] == "stt-async-v4"
 
     def test_update_config(self):
         payload = {
             "ENABLED": True,
+            "PROVIDER": "soniox",
             "ACCOUNT_NAME": "new-acct",
             "ACCOUNT_ID": "new-id",
             "RESOURCE_GROUP": "new-rg",
@@ -135,17 +142,25 @@ class TestConfigEndpoints:
             "CLIENT_SECRET": "new-secret",
             "INDEXING_PRESET": "AudioOnly",
             "LANGUAGE": "es-ES",
+            "SONIOX_API_KEY": "soniox-key",
+            "SONIOX_BASE_URL": "https://api.eu.soniox.com/v1",
+            "SONIOX_MODEL": "stt-async-v4",
+            "SONIOX_ENABLE_LANGUAGE_IDENTIFICATION": True,
+            "SONIOX_LANGUAGE_HINTS": ["ro", "en"],
         }
         resp = self.client.post("/api/v1/video-indexer/config/update", json=payload)
         assert resp.status_code == 200
         data = resp.json()
         assert data["ENABLED"] is True
+        assert data["PROVIDER"] == "soniox"
         assert data["ACCOUNT_NAME"] == "new-acct"
         assert data["LOCATION"] == "westus2"
         assert data["INDEXING_PRESET"] == "AudioOnly"
+        assert data["SONIOX_BASE_URL"] == "https://api.eu.soniox.com/v1"
 
         # Verify state was actually mutated
         assert self.app.state.config.VIDEO_INDEXER_ENABLED is True
+        assert self.app.state.config.VIDEO_INDEXER_PROVIDER == "soniox"
         assert self.app.state.config.VIDEO_INDEXER_LOCATION == "westus2"
 
     def test_update_config_partial_defaults(self):
@@ -160,6 +175,7 @@ class TestConfigEndpoints:
             "TENANT_ID": "",
             "CLIENT_ID": "",
             "CLIENT_SECRET": "",
+            "PROVIDER": "azure_video_indexer",
         }
         resp = self.client.post("/api/v1/video-indexer/config/update", json=payload)
         assert resp.status_code == 200
@@ -188,7 +204,21 @@ class TestVerifyEndpoint:
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] == "ok"
+        assert data["provider"] == "azure_video_indexer"
         assert data["account"]["name"] == "Test"
+
+    @patch("open_webui.routers.video_indexer.build_soniox_client_from_config")
+    def test_verify_soniox_success(self, mock_build):
+        self.app.state.config.VIDEO_INDEXER_PROVIDER = "soniox"
+        mock_client = MagicMock()
+        mock_client.verify_connection.return_value = {"status": "ok", "model": "stt-async-v4"}
+        mock_build.return_value = mock_client
+
+        resp = self.client.post("/api/v1/video-indexer/verify")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "ok"
+        assert data["provider"] == "soniox"
 
     @patch("open_webui.routers.video_indexer.build_client_from_config")
     def test_verify_config_error(self, mock_build):
@@ -224,8 +254,9 @@ class TestFileEndpoints:
     def test_status_found(self, mock_files):
         mock_file = MagicMock()
         mock_file.meta = {
-            "video_indexer": {
-                "video_id": "vid-abc",
+            "analyzer_provider": "soniox",
+            "analyzer": {
+                "transcription_id": "tr-abc",
                 "state": "Processed",
                 "progress": "100%",
             }
@@ -235,7 +266,7 @@ class TestFileEndpoints:
         resp = self.client.get("/api/v1/video-indexer/status/file-123")
         assert resp.status_code == 200
         data = resp.json()
-        assert data["video_id"] == "vid-abc"
+        assert data["transcription_id"] == "tr-abc"
         assert data["state"] == "Processed"
 
     @patch("open_webui.routers.video_indexer.Files")
@@ -261,7 +292,7 @@ class TestFileEndpoints:
     def test_insights_found(self, mock_files):
         mock_file = MagicMock()
         mock_file.meta = {
-            "video_indexer": {
+            "analyzer": {
                 "insights": {"keywords": ["test"], "topics": ["AI"]},
             }
         }

@@ -612,14 +612,14 @@
 				}
 
 				// During the file upload, file content is automatically extracted.
-				const isVideoFile = (file.type.startsWith('video/') || file.name.match(/\.(mp4|avi|mov|mkv|webm)$/i));
+				const isMediaFile = (file.type.startsWith('video/') || file.type.startsWith('audio/') || file.name.match(/\.(mp4|avi|mov|mkv|webm|mp3|wav|ogg|flac|m4a|aac|wma)$/i));
 
 				const uploadedFile = await uploadFile(localStorage.token, file, metadata, process,
-					isVideoFile
+					isMediaFile
 						? (progress: string) => {
-								// Progress can be "Uploading to Video Indexer..." or "45%" etc.
+								// Progress can be "Uploading to Soniox...", "Uploading to Video Indexer...", "45%", "Transcribing (30s)..." etc.
 								if (progress.includes('%')) {
-									fileItem.statusText = `Indexing video... ${progress}`;
+									fileItem.statusText = `Analyzing media... ${progress}`;
 								} else {
 									fileItem.statusText = progress;
 								}
@@ -1321,7 +1321,7 @@
 												type={file.type}
 												size={file?.size}
 												contentType={file?.content_type ?? ''}
-												statusText={file.statusText || (file.status === 'uploading' && (file?.content_type ?? file.name ?? '').match(/video|\.mp4|\.avi|\.mov|\.mkv|\.webm/i) ? $i18n.t('Analyzing video...') : '')}
+												statusText={file.statusText || (file.status === 'uploading' && (file?.content_type ?? file.name ?? '').match(/video|audio|\.mp4|\.avi|\.mov|\.mkv|\.webm|\.mp3|\.wav|\.ogg|\.flac|\.m4a/i) ? $i18n.t('Analyzing media...') : '')}
 												loading={file.status === 'uploading'}
 												dismissible={true}
 												edit={true}
