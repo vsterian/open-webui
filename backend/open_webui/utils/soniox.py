@@ -10,6 +10,7 @@ Implements async file transcription via Soniox REST API:
 
 import logging
 import time
+import os
 from pathlib import Path
 from typing import Any, Optional
 
@@ -23,6 +24,52 @@ DEFAULT_MODEL = "stt-async-v4"
 
 class SonioxError(Exception):
     """Raised when a Soniox API call fails."""
+
+
+def normalize_audio_file_for_soniox(
+    file_path: str,
+    filename: Optional[str] = None,
+    content_type: Optional[str] = None,
+) -> tuple[str, str]:
+    """
+    Normalize audio files that Soniox may reject (for example webm/opus)
+    by converting them to mp3 prior to upload.
+
+    Returns a tuple of (normalized_file_path, normalized_filename).
+    """
+    original = Path(file_path)
+    if not original.exists():
+        raise SonioxError(f"File does not exist: {file_path}")
+
+    upload_name = filename or original.name
+    suffix = original.suffix.lower()
+    ctype = (content_type or "").lower()
+
+    needs_conversion = suffix in {".webm", ".ogg", ".oga", ".opus"} or any(
+        marker in ctype for marker in ["webm", "ogg", "opus"]
+    )
+
+    if not needs_conversion:
+        return file_path, upload_name
+
+    converted_path = os.path.splitext(file_path)[0] + ".mp3"
+    try:
+        from pydub import AudioSegment
+
+        audio = AudioSegment.from_file(file_path)
+        audio.export(converted_path, format="mp3")
+    except Exception as exc:
+        raise SonioxError(
+            f"Failed to convert audio for Soniox upload: {exc}"
+        ) from exc
+
+    converted_name = str(Path(upload_name).with_suffix(".mp3"))
+    log.info(
+        "Converted Soniox upload from unsupported format: %s -> %s",
+        file_path,
+        converted_path,
+    )
+    return converted_path, converted_name
 
 
 class SonioxClient:

@@ -2223,6 +2223,7 @@ async def get_app_config(request: Request):
                     "enable_google_drive_integration": app.state.config.ENABLE_GOOGLE_DRIVE_INTEGRATION,
                     "enable_onedrive_integration": app.state.config.ENABLE_ONEDRIVE_INTEGRATION,
                     "enable_memories": app.state.config.ENABLE_MEMORIES,
+                    "enable_video_indexer": app.state.config.VIDEO_INDEXER_ENABLED,
                     **(
                         {
                             "enable_onedrive_personal": ENABLE_ONEDRIVE_PERSONAL,

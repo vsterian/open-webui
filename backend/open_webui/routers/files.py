@@ -55,7 +55,11 @@ from open_webui.utils.video_indexer import (
     VideoIndexerError,
     build_client_from_config,
 )
-from open_webui.utils.soniox import SonioxError, build_soniox_client_from_config
+from open_webui.utils.soniox import (
+    SonioxError,
+    build_soniox_client_from_config,
+    normalize_audio_file_for_soniox,
+)
 from pydantic import BaseModel
 
 log = logging.getLogger(__name__)
@@ -413,6 +417,17 @@ def _process_media_with_soniox(
     try:
         client = build_soniox_client_from_config(request.app.state.config)
         resolved_path = Storage.get_file(file_path)
+        content_type = (
+            (file_item.meta or {}).get("content_type")
+            if isinstance(file_item.meta, dict)
+            else None
+        )
+
+        normalized_path, normalized_filename = normalize_audio_file_for_soniox(
+            resolved_path,
+            filename=file_item.filename,
+            content_type=content_type,
+        )
 
         Files.update_file_data_by_id(
             file_item.id,
@@ -444,8 +459,8 @@ def _process_media_with_soniox(
             )
 
         result = client.transcribe_file(
-            file_path=resolved_path,
-            filename=file_item.filename,
+            file_path=normalized_path,
+            filename=normalized_filename,
             client_reference_id=file_item.id,
             poll_interval=10,
             timeout=3600,

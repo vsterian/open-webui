@@ -2,6 +2,7 @@
 Unit tests for open_webui.utils.soniox module.
 """
 
+import sys
 from types import SimpleNamespace
 from unittest.mock import MagicMock, mock_open, patch
 
@@ -11,6 +12,7 @@ from open_webui.utils.soniox import (
     SonioxClient,
     SonioxError,
     build_soniox_client_from_config,
+    normalize_audio_file_for_soniox,
 )
 
 
@@ -134,3 +136,56 @@ class TestBuildClientFromConfig:
 
         with pytest.raises(SonioxError, match="SONIOX_API_KEY"):
             build_soniox_client_from_config(config)
+
+
+class TestNormalizeAudioForSoniox:
+    @patch("open_webui.utils.soniox.Path.exists")
+    def test_passthrough_for_supported_audio(self, mock_exists):
+        mock_exists.return_value = True
+
+        out_path, out_name = normalize_audio_file_for_soniox(
+            "/tmp/meeting.mp3", filename="meeting.mp3", content_type="audio/mpeg"
+        )
+
+        assert out_path == "/tmp/meeting.mp3"
+        assert out_name == "meeting.mp3"
+
+    @patch("open_webui.utils.soniox.Path.exists")
+    def test_convert_webm_to_mp3(self, mock_exists):
+        mock_exists.return_value = True
+        audio = MagicMock()
+        fake_pydub = MagicMock()
+        fake_pydub.AudioSegment.from_file.return_value = audio
+
+        with patch.dict(sys.modules, {"pydub": fake_pydub}):
+            out_path, out_name = normalize_audio_file_for_soniox(
+                "/tmp/meeting.webm",
+                filename="meeting.webm",
+                content_type="audio/webm;codecs=opus",
+            )
+
+        assert out_path == "/tmp/meeting.mp3"
+        assert out_name == "meeting.mp3"
+        fake_pydub.AudioSegment.from_file.assert_called_once_with("/tmp/meeting.webm")
+        audio.export.assert_called_once_with("/tmp/meeting.mp3", format="mp3")
+
+    @patch("open_webui.utils.soniox.Path.exists")
+    def test_missing_file_raises(self, mock_exists):
+        mock_exists.return_value = False
+
+        with pytest.raises(SonioxError, match="File does not exist"):
+            normalize_audio_file_for_soniox("/tmp/missing.webm")
+
+    @patch("open_webui.utils.soniox.Path.exists")
+    def test_conversion_failure_raises(self, mock_exists):
+        mock_exists.return_value = True
+        fake_pydub = MagicMock()
+        fake_pydub.AudioSegment.from_file.side_effect = Exception("decode failed")
+
+        with patch.dict(sys.modules, {"pydub": fake_pydub}):
+            with pytest.raises(SonioxError, match="Failed to convert audio"):
+                normalize_audio_file_for_soniox(
+                    "/tmp/meeting.webm",
+                    filename="meeting.webm",
+                    content_type="audio/webm",
+                )
