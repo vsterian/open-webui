@@ -2,10 +2,12 @@ import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig } from 'vite';
 
 import { viteStaticCopy } from 'vite-plugin-static-copy';
+import { svelteTesting } from '@testing-library/svelte/vite';
 
 export default defineConfig({
 	plugins: [
 		sveltekit(),
+		svelteTesting(),
 		viteStaticCopy({
 			targets: [
 				{
@@ -28,5 +30,10 @@ export default defineConfig({
 	},
 	esbuild: {
 		pure: process.env.ENV === 'dev' ? [] : ['console.log', 'console.debug', 'console.error']
+	},
+	test: {
+		environment: 'jsdom',
+		setupFiles: ['./src/test-setup.ts'],
+		include: ['src/**/*.{test,spec}.{js,ts}']
 	}
 });

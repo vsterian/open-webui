@@ -97,6 +97,7 @@ from open_webui.routers import (
     utils,
     scim,
     terminals,
+    video_indexer,
 )
 
 from open_webui.routers.retrieval import (
@@ -1302,6 +1303,67 @@ app.state.speech_speaker_embeddings_dataset = None
 
 ########################################
 #
+# VIDEO INDEXER
+#
+########################################
+
+from open_webui.config import (
+    VIDEO_INDEXER_ENABLED,
+    VIDEO_INDEXER_PROVIDER,
+    VIDEO_INDEXER_ACCOUNT_NAME,
+    VIDEO_INDEXER_ACCOUNT_ID,
+    VIDEO_INDEXER_RESOURCE_GROUP,
+    VIDEO_INDEXER_SUBSCRIPTION_ID,
+    VIDEO_INDEXER_LOCATION,
+    VIDEO_INDEXER_TENANT_ID,
+    VIDEO_INDEXER_CLIENT_ID,
+    VIDEO_INDEXER_CLIENT_SECRET,
+    VIDEO_INDEXER_INDEXING_PRESET,
+    VIDEO_INDEXER_LANGUAGE,
+    SONIOX_API_KEY,
+    SONIOX_BASE_URL,
+    SONIOX_MODEL,
+    SONIOX_ENABLE_LANGUAGE_IDENTIFICATION,
+    SONIOX_LANGUAGE_HINTS,
+    SONIOX_ENABLE_SPEAKER_DIARIZATION,
+    SONIOX_ENABLE_TRANSLATION,
+    SONIOX_TRANSLATION_MODE,
+    SONIOX_TRANSLATION_TARGET_LANGUAGE,
+    SONIOX_TRANSLATION_SECOND_LANGUAGE,
+    SONIOX_CONTEXT_TERMS,
+    SONIOX_CONTEXT_TEXT,
+)
+
+app.state.config.VIDEO_INDEXER_ENABLED = VIDEO_INDEXER_ENABLED
+app.state.config.VIDEO_INDEXER_PROVIDER = VIDEO_INDEXER_PROVIDER
+app.state.config.VIDEO_INDEXER_ACCOUNT_NAME = VIDEO_INDEXER_ACCOUNT_NAME
+app.state.config.VIDEO_INDEXER_ACCOUNT_ID = VIDEO_INDEXER_ACCOUNT_ID
+app.state.config.VIDEO_INDEXER_RESOURCE_GROUP = VIDEO_INDEXER_RESOURCE_GROUP
+app.state.config.VIDEO_INDEXER_SUBSCRIPTION_ID = VIDEO_INDEXER_SUBSCRIPTION_ID
+app.state.config.VIDEO_INDEXER_LOCATION = VIDEO_INDEXER_LOCATION
+app.state.config.VIDEO_INDEXER_TENANT_ID = VIDEO_INDEXER_TENANT_ID
+app.state.config.VIDEO_INDEXER_CLIENT_ID = VIDEO_INDEXER_CLIENT_ID
+app.state.config.VIDEO_INDEXER_CLIENT_SECRET = VIDEO_INDEXER_CLIENT_SECRET
+app.state.config.VIDEO_INDEXER_INDEXING_PRESET = VIDEO_INDEXER_INDEXING_PRESET
+app.state.config.VIDEO_INDEXER_LANGUAGE = VIDEO_INDEXER_LANGUAGE
+app.state.config.SONIOX_API_KEY = SONIOX_API_KEY
+app.state.config.SONIOX_BASE_URL = SONIOX_BASE_URL
+app.state.config.SONIOX_MODEL = SONIOX_MODEL
+app.state.config.SONIOX_ENABLE_LANGUAGE_IDENTIFICATION = (
+    SONIOX_ENABLE_LANGUAGE_IDENTIFICATION
+)
+app.state.config.SONIOX_LANGUAGE_HINTS = SONIOX_LANGUAGE_HINTS
+app.state.config.SONIOX_ENABLE_SPEAKER_DIARIZATION = SONIOX_ENABLE_SPEAKER_DIARIZATION
+app.state.config.SONIOX_ENABLE_TRANSLATION = SONIOX_ENABLE_TRANSLATION
+app.state.config.SONIOX_TRANSLATION_MODE = SONIOX_TRANSLATION_MODE
+app.state.config.SONIOX_TRANSLATION_TARGET_LANGUAGE = SONIOX_TRANSLATION_TARGET_LANGUAGE
+app.state.config.SONIOX_TRANSLATION_SECOND_LANGUAGE = SONIOX_TRANSLATION_SECOND_LANGUAGE
+app.state.config.SONIOX_CONTEXT_TERMS = SONIOX_CONTEXT_TERMS
+app.state.config.SONIOX_CONTEXT_TEXT = SONIOX_CONTEXT_TEXT
+
+
+########################################
+#
 # TASKS
 #
 ########################################
@@ -1533,6 +1595,9 @@ app.include_router(tasks.router, prefix="/api/v1/tasks", tags=["tasks"])
 app.include_router(images.router, prefix="/api/v1/images", tags=["images"])
 
 app.include_router(audio.router, prefix="/api/v1/audio", tags=["audio"])
+app.include_router(
+    video_indexer.router, prefix="/api/v1/video-indexer", tags=["video-indexer"]
+)
 app.include_router(retrieval.router, prefix="/api/v1/retrieval", tags=["retrieval"])
 
 app.include_router(configs.router, prefix="/api/v1/configs", tags=["configs"])
@@ -2172,6 +2237,7 @@ async def get_app_config(request: Request):
                     "enable_google_drive_integration": app.state.config.ENABLE_GOOGLE_DRIVE_INTEGRATION,
                     "enable_onedrive_integration": app.state.config.ENABLE_ONEDRIVE_INTEGRATION,
                     "enable_memories": app.state.config.ENABLE_MEMORIES,
+                    "enable_video_indexer": app.state.config.VIDEO_INDEXER_ENABLED,
                     **(
                         {
                             "enable_onedrive_personal": ENABLE_ONEDRIVE_PERSONAL,

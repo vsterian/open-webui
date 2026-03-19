@@ -65,6 +65,7 @@
 
 	import InputMenu from './MessageInput/InputMenu.svelte';
 	import VoiceRecording from './MessageInput/VoiceRecording.svelte';
+	import MeetingRecording from './MessageInput/MeetingRecording.svelte';
 
 	import ToolServersModal from './ToolServersModal.svelte';
 
@@ -82,6 +83,7 @@
 
 	import InputVariablesModal from './MessageInput/InputVariablesModal.svelte';
 	import Voice from '../icons/Voice.svelte';
+	import RecordMeeting from '../icons/RecordMeeting.svelte';
 	import Cloud from '../icons/Cloud.svelte';
 	import IntegrationsMenu from './MessageInput/IntegrationsMenu.svelte';
 	import TerminalMenu from './MessageInput/TerminalMenu.svelte';
@@ -410,6 +412,7 @@
 
 	let loaded = false;
 	let recording = false;
+	let meetingRecording = false;
 
 	let isComposing = false;
 	// Safari has a bug where compositionend is not triggered correctly #16615
@@ -612,7 +615,21 @@
 				}
 
 				// During the file upload, file content is automatically extracted.
-				const uploadedFile = await uploadFile(localStorage.token, file, metadata, process);
+				const isMediaFile = (file.type.startsWith('video/') || file.type.startsWith('audio/') || file.name.match(/\.(mp4|avi|mov|mkv|webm|mp3|wav|ogg|flac|m4a|aac|wma)$/i));
+
+				const uploadedFile = await uploadFile(localStorage.token, file, metadata, process,
+					isMediaFile
+						? (progress: string) => {
+								// Progress can be "Uploading to Soniox...", "Uploading to Video Indexer...", "45%", "Transcribing (30s)..." etc.
+								if (progress.includes('%')) {
+									fileItem.statusText = `Analyzing media... ${progress}`;
+								} else {
+									fileItem.statusText = progress;
+								}
+								files = files;
+							}
+						: undefined
+				);
 
 				if (uploadedFile) {
 					console.log('File upload completed:', {
@@ -1165,8 +1182,29 @@
 							}}
 						/>
 					</div>
+					<div class={meetingRecording ? '' : 'hidden'}>
+						<MeetingRecording
+							bind:recording={meetingRecording}
+							onCancel={async () => {
+								meetingRecording = false;
+
+								await tick();
+								document.getElementById('chat-input')?.focus();
+							}}
+							onComplete={async (file) => {
+								meetingRecording = false;
+
+								await tick();
+								document.getElementById('chat-input')?.focus();
+
+								// Upload the recording through the standard file upload pipeline
+								// which routes audio files to Video Indexer/Soniox
+								await uploadFileHandler(file, true);
+							}}
+						/>
+					</div>
 					<form
-						class="w-full flex flex-col gap-1.5 {recording ? 'hidden' : ''}"
+						class="w-full flex flex-col gap-1.5 {recording || meetingRecording ? 'hidden' : ''}"
 						on:submit|preventDefault={() => {
 							// check if selectedModels support image input
 							dispatch('submit', prompt);
@@ -1306,6 +1344,8 @@
 												name={file.name}
 												type={file.type}
 												size={file?.size}
+												contentType={file?.content_type ?? ''}
+												statusText={file.statusText || (file.status === 'uploading' && (file?.content_type ?? file.name ?? '').match(/video|audio|\.mp4|\.avi|\.mov|\.mkv|\.webm|\.mp3|\.wav|\.ogg|\.flac|\.m4a/i) ? $i18n.t('Analyzing media...') : '')}
 												loading={file.status === 'uploading'}
 												dismissible={true}
 												edit={true}
@@ -1862,6 +1902,44 @@
 																d="M5.5 9.643a.75.75 0 00-1.5 0V10c0 3.06 2.29 5.585 5.25 5.954V17.5h-1.5a.75.75 0 000 1.5h4.5a.75.75 0 000-1.5h-1.5v-1.546A6.001 6.001 0 0016 10v-.357a.75.75 0 00-1.5 0V10a4.5 4.5 0 01-9 0v-.357z"
 															/>
 														</svg>
+													</button>
+												</Tooltip>
+											{/if}
+										{/if}
+
+										{#if !history?.currentId || history.messages[history.currentId]?.done == true}
+											{#if $_user?.role === 'admin' || ($_user?.permissions?.chat?.stt ?? true)}
+												<Tooltip content={$i18n.t('Record meeting')}>
+													<button
+														id="meeting-record-button"
+														class="text-red-500 dark:text-red-400 hover:text-red-600 dark:hover:text-red-300 transition rounded-full p-1.5 self-center mr-0.5"
+														type="button"
+														on:click={async () => {
+															try {
+																let stream = await navigator.mediaDevices
+																	.getUserMedia({ audio: true })
+																	.catch(function (err) {
+																		toast.error(
+																			$i18n.t(
+																				`Permission denied when accessing microphone: {{error}}`,
+																				{ error: err }
+																			)
+																		);
+																		return null;
+																	});
+																if (stream) {
+																	meetingRecording = true;
+																	const tracks = stream.getTracks();
+																	tracks.forEach((track) => track.stop());
+																}
+																stream = null;
+															} catch {
+																toast.error($i18n.t('Permission denied when accessing microphone'));
+															}
+														}}
+														aria-label="Record meeting"
+													>
+														<RecordMeeting className="size-5" />
 													</button>
 												</Tooltip>
 											{/if}

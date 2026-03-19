@@ -21,6 +21,7 @@
 	import Evaluations from './Settings/Evaluations.svelte';
 	import CodeExecution from './Settings/CodeExecution.svelte';
 	import Integrations from './Settings/Integrations.svelte';
+	import VideoIndexer from './Settings/VideoIndexer.svelte';
 
 	import ChartBar from '../icons/ChartBar.svelte';
 	import DocumentChartBar from '../icons/DocumentChartBar.svelte';
@@ -46,6 +47,7 @@
 			'code-execution',
 			'interface',
 			'audio',
+			'video-indexer',
 			'images',
 			'pipelines',
 			'db'
@@ -216,6 +218,21 @@
 				'azure',
 				'openai',
 				'elevenlabs'
+			]
+		},
+		{
+			id: 'video-indexer',
+			title: 'Video Indexer',
+			route: '/admin/settings/video-indexer',
+			keywords: [
+				'video',
+				'indexer',
+				'azure',
+				'video indexer',
+				'transcript',
+				'insights',
+				'media',
+				'analysis'
 			]
 		},
 		{
@@ -451,6 +468,22 @@
 								d="M10.828 5.172a.75.75 0 1 0-1.06 1.06 2.5 2.5 0 0 1 0 3.536.75.75 0 1 0 1.06 1.06 4 4 0 0 0 0-5.656Z"
 							/>
 						</svg>
+					{:else if tab.id === 'video-indexer'}
+						<svg
+							xmlns="http://www.w3.org/2000/svg"
+							viewBox="0 0 16 16"
+							fill="currentColor"
+							class="w-4 h-4"
+						>
+							<path
+								d="M1 4.75A.75.75 0 0 1 1.75 4h12.5a.75.75 0 0 1 0 1.5H1.75A.75.75 0 0 1 1 4.75ZM1 11.25a.75.75 0 0 1 .75-.75h12.5a.75.75 0 0 1 0 1.5H1.75a.75.75 0 0 1-.75-.75Z"
+							/>
+							<path
+								fill-rule="evenodd"
+								d="M2.5 2A1.5 1.5 0 0 0 1 3.5v9A1.5 1.5 0 0 0 2.5 14h11a1.5 1.5 0 0 0 1.5-1.5v-9A1.5 1.5 0 0 0 13.5 2h-11ZM6.25 6a.75.75 0 0 1 .388.108l3.5 2.125a.75.75 0 0 1 0 1.284l-3.5 2.125A.75.75 0 0 1 5.5 11V5.75A.75.75 0 0 1 6.25 6Z"
+								clip-rule="evenodd"
+							/>
+						</svg>
 					{:else if tab.id === 'images'}
 						<svg
 							xmlns="http://www.w3.org/2000/svg"
@@ -562,6 +595,12 @@
 			/>
 		{:else if selectedTab === 'audio'}
 			<Audio
+				saveHandler={() => {
+					toast.success($i18n.t('Settings saved successfully!'));
+				}}
+			/>
+		{:else if selectedTab === 'video-indexer'}
+			<VideoIndexer
 				saveHandler={() => {
 					toast.success($i18n.t('Settings saved successfully!'));
 				}}

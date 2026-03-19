@@ -4214,6 +4214,163 @@ AUDIO_TTS_AZURE_SPEECH_OUTPUT_FORMAT = PersistentConfig(
 
 
 ####################################
+# Video Indexer (Azure AI Video Indexer)
+####################################
+
+VIDEO_INDEXER_ENABLED = PersistentConfig(
+    "VIDEO_INDEXER_ENABLED",
+    "video_indexer.enabled",
+    os.environ.get("VIDEO_INDEXER_ENABLED", "false").lower() == "true",
+)
+
+VIDEO_INDEXER_PROVIDER = PersistentConfig(
+    "VIDEO_INDEXER_PROVIDER",
+    "video_indexer.provider",
+    os.getenv("VIDEO_INDEXER_PROVIDER", "azure_video_indexer"),
+)
+
+VIDEO_INDEXER_ACCOUNT_NAME = PersistentConfig(
+    "VIDEO_INDEXER_ACCOUNT_NAME",
+    "video_indexer.account_name",
+    os.getenv("VIDEO_INDEXER_ACCOUNT_NAME", ""),
+)
+
+VIDEO_INDEXER_ACCOUNT_ID = PersistentConfig(
+    "VIDEO_INDEXER_ACCOUNT_ID",
+    "video_indexer.account_id",
+    os.getenv("VIDEO_INDEXER_ACCOUNT_ID", ""),
+)
+
+VIDEO_INDEXER_RESOURCE_GROUP = PersistentConfig(
+    "VIDEO_INDEXER_RESOURCE_GROUP",
+    "video_indexer.resource_group",
+    os.getenv("VIDEO_INDEXER_RESOURCE_GROUP", ""),
+)
+
+VIDEO_INDEXER_SUBSCRIPTION_ID = PersistentConfig(
+    "VIDEO_INDEXER_SUBSCRIPTION_ID",
+    "video_indexer.subscription_id",
+    os.getenv("VIDEO_INDEXER_SUBSCRIPTION_ID", ""),
+)
+
+VIDEO_INDEXER_LOCATION = PersistentConfig(
+    "VIDEO_INDEXER_LOCATION",
+    "video_indexer.location",
+    os.getenv("VIDEO_INDEXER_LOCATION", ""),
+)
+
+VIDEO_INDEXER_TENANT_ID = PersistentConfig(
+    "VIDEO_INDEXER_TENANT_ID",
+    "video_indexer.tenant_id",
+    os.getenv("VIDEO_INDEXER_TENANT_ID", ""),
+)
+
+VIDEO_INDEXER_CLIENT_ID = PersistentConfig(
+    "VIDEO_INDEXER_CLIENT_ID",
+    "video_indexer.client_id",
+    os.getenv("VIDEO_INDEXER_CLIENT_ID", ""),
+)
+
+VIDEO_INDEXER_CLIENT_SECRET = PersistentConfig(
+    "VIDEO_INDEXER_CLIENT_SECRET",
+    "video_indexer.client_secret",
+    os.getenv("VIDEO_INDEXER_CLIENT_SECRET", ""),
+)
+
+VIDEO_INDEXER_INDEXING_PRESET = PersistentConfig(
+    "VIDEO_INDEXER_INDEXING_PRESET",
+    "video_indexer.indexing_preset",
+    os.getenv("VIDEO_INDEXER_INDEXING_PRESET", "Default"),
+)
+
+VIDEO_INDEXER_LANGUAGE = PersistentConfig(
+    "VIDEO_INDEXER_LANGUAGE",
+    "video_indexer.language",
+    os.getenv("VIDEO_INDEXER_LANGUAGE", "en-US"),
+)
+
+SONIOX_API_KEY = PersistentConfig(
+    "SONIOX_API_KEY",
+    "video_indexer.soniox.api_key",
+    os.getenv("SONIOX_API_KEY", ""),
+)
+
+SONIOX_BASE_URL = PersistentConfig(
+    "SONIOX_BASE_URL",
+    "video_indexer.soniox.base_url",
+    os.getenv("SONIOX_BASE_URL", "https://api.soniox.com/v1"),
+)
+
+SONIOX_MODEL = PersistentConfig(
+    "SONIOX_MODEL",
+    "video_indexer.soniox.model",
+    os.getenv("SONIOX_MODEL", "stt-async-v4"),
+)
+
+SONIOX_ENABLE_LANGUAGE_IDENTIFICATION = PersistentConfig(
+    "SONIOX_ENABLE_LANGUAGE_IDENTIFICATION",
+    "video_indexer.soniox.enable_language_identification",
+    os.getenv("SONIOX_ENABLE_LANGUAGE_IDENTIFICATION", "true").lower() == "true",
+)
+
+SONIOX_LANGUAGE_HINTS = PersistentConfig(
+    "SONIOX_LANGUAGE_HINTS",
+    "video_indexer.soniox.language_hints",
+    [
+        item.strip()
+        for item in os.getenv("SONIOX_LANGUAGE_HINTS", "").split(",")
+        if item.strip()
+    ],
+)
+
+SONIOX_ENABLE_SPEAKER_DIARIZATION = PersistentConfig(
+    "SONIOX_ENABLE_SPEAKER_DIARIZATION",
+    "video_indexer.soniox.enable_speaker_diarization",
+    os.getenv("SONIOX_ENABLE_SPEAKER_DIARIZATION", "true").lower() == "true",
+)
+
+SONIOX_ENABLE_TRANSLATION = PersistentConfig(
+    "SONIOX_ENABLE_TRANSLATION",
+    "video_indexer.soniox.enable_translation",
+    os.getenv("SONIOX_ENABLE_TRANSLATION", "false").lower() == "true",
+)
+
+SONIOX_TRANSLATION_MODE = PersistentConfig(
+    "SONIOX_TRANSLATION_MODE",
+    "video_indexer.soniox.translation_mode",
+    os.getenv("SONIOX_TRANSLATION_MODE", "two_way"),
+)
+
+SONIOX_TRANSLATION_TARGET_LANGUAGE = PersistentConfig(
+    "SONIOX_TRANSLATION_TARGET_LANGUAGE",
+    "video_indexer.soniox.translation_target_language",
+    os.getenv("SONIOX_TRANSLATION_TARGET_LANGUAGE", "en"),
+)
+
+SONIOX_TRANSLATION_SECOND_LANGUAGE = PersistentConfig(
+    "SONIOX_TRANSLATION_SECOND_LANGUAGE",
+    "video_indexer.soniox.translation_second_language",
+    os.getenv("SONIOX_TRANSLATION_SECOND_LANGUAGE", "en"),
+)
+
+SONIOX_CONTEXT_TERMS = PersistentConfig(
+    "SONIOX_CONTEXT_TERMS",
+    "video_indexer.soniox.context_terms",
+    [
+        item.strip()
+        for item in os.getenv("SONIOX_CONTEXT_TERMS", "").split(",")
+        if item.strip()
+    ],
+)
+
+SONIOX_CONTEXT_TEXT = PersistentConfig(
+    "SONIOX_CONTEXT_TEXT",
+    "video_indexer.soniox.context_text",
+    os.getenv("SONIOX_CONTEXT_TEXT", ""),
+)
+
+
+####################################
 # LDAP
 ####################################
 

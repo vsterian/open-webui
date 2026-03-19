@@ -70,6 +70,7 @@ from open_webui.utils.files import (
 from open_webui.models.users import UserModel
 from open_webui.models.functions import Functions
 from open_webui.models.models import Models
+from open_webui.models.files import Files as FileModel
 
 from open_webui.retrieval.utils import get_sources_from_items
 
@@ -1669,6 +1670,48 @@ def add_file_context(messages: list, chat_id: str, user) -> list:
             attrs += f' name="{file["name"]}"'
         return f"<file {attrs}/>"
 
+    def format_soniox_context(file_record):
+        """Build rich transcript context from Soniox analyzer metadata."""
+        meta = file_record.meta if isinstance(file_record.meta, dict) else {}
+        analyzer = meta.get("analyzer", {})
+        if analyzer.get("provider") != "soniox":
+            return None
+
+        insights = analyzer.get("insights", {})
+        languages = insights.get("languages", [])
+        speakers = insights.get("speakers", [])
+        speaker_segments = insights.get("speaker_segments", [])
+        translated_text = insights.get("translated_text", "")
+
+        parts = [f'<transcript source="{file_record.filename}" provider="soniox"']
+        if languages:
+            parts[0] += f' languages="{", ".join(languages)}"'
+        if speakers:
+            parts[0] += f' speakers="{len(speakers)}"'
+        parts[0] += ">"
+
+        if speaker_segments:
+            for seg in speaker_segments:
+                start = seg.get("start_s")
+                ts = f" [{start:.1f}s]" if start is not None else ""
+                parts.append(f"  Speaker {seg.get('speaker', '?')}{ts}: {seg.get('text', '')}")
+        else:
+            # Fallback: get plain text from tokens
+            tokens = insights.get("tokens", [])
+            if tokens:
+                text = "".join(
+                    t.get("text", "") for t in tokens
+                    if isinstance(t, dict) and t.get("translation_status") != "translation"
+                )
+                if text.strip():
+                    parts.append(f"  {text.strip()}")
+
+        if translated_text:
+            parts.append(f"  <translation>{translated_text}</translation>")
+
+        parts.append("</transcript>")
+        return "\n".join(parts)
+
     for message, stored_message in zip(messages, stored_messages):
         files_with_urls = [
             file
@@ -1678,10 +1721,24 @@ def add_file_context(messages: list, chat_id: str, user) -> list:
         if not files_with_urls:
             continue
 
-        file_tags = [format_file_tag(file) for file in files_with_urls]
+        file_tags = []
+        transcript_blocks = []
+        for file in files_with_urls:
+            file_tags.append(format_file_tag(file))
+            # Check if file has Soniox transcript metadata
+            file_id = file.get("id", "")
+            if file_id:
+                file_record = FileModel.get_file_by_id(file_id)
+                if file_record:
+                    transcript_ctx = format_soniox_context(file_record)
+                    if transcript_ctx:
+                        transcript_blocks.append(transcript_ctx)
+
         file_context = (
             "<attached_files>\n" + "\n".join(file_tags) + "\n</attached_files>\n\n"
         )
+        if transcript_blocks:
+            file_context += "\n".join(transcript_blocks) + "\n\n"
 
         content = message.get("content", "")
         if isinstance(content, list):

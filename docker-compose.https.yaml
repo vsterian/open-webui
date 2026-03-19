@@ -1,0 +1,31 @@
+# HTTPS reverse proxy for Open WebUI
+#
+# This adds an nginx reverse proxy with a self-signed SSL certificate,
+# enabling getUserMedia (microphone, camera) access from non-localhost origins.
+#
+# Usage:
+#   1. Generate SSL certificates: ./scripts/generate-ssl-cert.sh
+#   2. Start with: docker compose -f docker-compose.yaml -f docker-compose.https.yaml up -d
+#   3. Access at: https://localhost
+#
+# NOTE: Your browser will show a security warning for the self-signed certificate.
+#       Click "Advanced" → "Proceed" to accept it.
+
+services:
+  open-webui:
+    environment:
+      - WEBUI_SESSION_COOKIE_SECURE=true
+      - WEBUI_AUTH_COOKIE_SECURE=true
+
+  nginx:
+    image: nginx:alpine
+    container_name: open-webui-nginx
+    restart: unless-stopped
+    ports:
+      - "443:443"
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - open-webui
