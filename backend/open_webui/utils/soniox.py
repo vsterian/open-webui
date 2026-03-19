@@ -40,6 +40,10 @@ VIDEO_SUFFIXES = {
     ".mpg",
 }
 
+SONIOX_AUDIO_CACHE_DIR = os.getenv(
+    "SONIOX_AUDIO_CACHE_DIR", "/tmp/open-webui-soniox-cache"
+)
+
 
 def _is_video_input(suffix: str, content_type: str) -> bool:
     return suffix in VIDEO_SUFFIXES or content_type.startswith("video/")
@@ -48,8 +52,29 @@ def _is_video_input(suffix: str, content_type: str) -> bool:
 def _extract_audio_from_video_for_soniox(
     file_path: str,
     upload_name: str,
+    cache_key: Optional[str] = None,
 ) -> tuple[str, str]:
-    extracted_path = os.path.splitext(file_path)[0] + ".soniox.mp3"
+    if cache_key:
+        os.makedirs(SONIOX_AUDIO_CACHE_DIR, exist_ok=True)
+        extracted_path = os.path.join(SONIOX_AUDIO_CACHE_DIR, f"{cache_key}.mp3")
+        if os.path.exists(extracted_path):
+            extracted_name = str(Path(upload_name).with_suffix(".mp3"))
+            log.info(
+                "Reusing cached Soniox extracted audio: %s",
+                extracted_path,
+            )
+            return extracted_path, extracted_name
+    else:
+        extracted_path = os.path.splitext(file_path)[0] + ".soniox.mp3"
+
+    try:
+        file_size_mb = max(1.0, os.path.getsize(file_path) / (1024 * 1024))
+    except OSError:
+        file_size_mb = 1.0
+    # Scale extraction timeout with input size to avoid premature failures on
+    # large uploads (such as iPhone videos), while keeping an upper bound.
+    extraction_timeout = int(min(14400, max(300, file_size_mb * 6)))
+
     command = [
         "ffmpeg",
         "-y",
@@ -73,7 +98,7 @@ def _extract_audio_from_video_for_soniox(
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            timeout=300,
+            timeout=extraction_timeout,
             check=False,
         )
     except Exception as exc:
@@ -101,6 +126,7 @@ def normalize_audio_file_for_soniox(
     file_path: str,
     filename: Optional[str] = None,
     content_type: Optional[str] = None,
+    content_hash: Optional[str] = None,
 ) -> tuple[str, str]:
     """
     Normalize audio files that Soniox may reject (for example webm/opus)
@@ -117,7 +143,9 @@ def normalize_audio_file_for_soniox(
     ctype = (content_type or "").lower()
 
     if _is_video_input(suffix, ctype):
-        return _extract_audio_from_video_for_soniox(file_path, upload_name)
+        return _extract_audio_from_video_for_soniox(
+            file_path, upload_name, cache_key=content_hash
+        )
 
     needs_conversion = suffix in {".webm", ".ogg", ".oga", ".opus"} or any(
         marker in ctype for marker in ["webm", "ogg", "opus"]
