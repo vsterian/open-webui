@@ -11,6 +11,7 @@ Implements async file transcription via Soniox REST API:
 import logging
 import time
 import os
+import subprocess
 from pathlib import Path
 from typing import Any, Optional
 
@@ -24,6 +25,76 @@ DEFAULT_MODEL = "stt-async-v4"
 
 class SonioxError(Exception):
     """Raised when a Soniox API call fails."""
+
+
+VIDEO_SUFFIXES = {
+    ".mp4",
+    ".m4v",
+    ".mov",
+    ".qt",
+    ".mkv",
+    ".avi",
+    ".wmv",
+    ".flv",
+    ".mpeg",
+    ".mpg",
+}
+
+
+def _is_video_input(suffix: str, content_type: str) -> bool:
+    return suffix in VIDEO_SUFFIXES or content_type.startswith("video/")
+
+
+def _extract_audio_from_video_for_soniox(
+    file_path: str,
+    upload_name: str,
+) -> tuple[str, str]:
+    extracted_path = os.path.splitext(file_path)[0] + ".soniox.mp3"
+    command = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        file_path,
+        "-vn",
+        "-ac",
+        "1",
+        "-ar",
+        "16000",
+        "-codec:a",
+        "libmp3lame",
+        "-q:a",
+        "4",
+        extracted_path,
+    ]
+
+    try:
+        result = subprocess.run(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=300,
+            check=False,
+        )
+    except Exception as exc:
+        raise SonioxError(f"Failed to extract audio from video: {exc}") from exc
+
+    if result.returncode != 0:
+        stderr = (result.stderr or "").strip()
+        if len(stderr) > 500:
+            stderr = stderr[-500:]
+        raise SonioxError(
+            "Failed to extract audio from video for Soniox upload"
+            + (f": {stderr}" if stderr else "")
+        )
+
+    extracted_name = str(Path(upload_name).with_suffix(".mp3"))
+    log.info(
+        "Extracted audio for Soniox upload: %s -> %s",
+        file_path,
+        extracted_path,
+    )
+    return extracted_path, extracted_name
 
 
 def normalize_audio_file_for_soniox(
@@ -44,6 +115,9 @@ def normalize_audio_file_for_soniox(
     upload_name = filename or original.name
     suffix = original.suffix.lower()
     ctype = (content_type or "").lower()
+
+    if _is_video_input(suffix, ctype):
+        return _extract_audio_from_video_for_soniox(file_path, upload_name)
 
     needs_conversion = suffix in {".webm", ".ogg", ".oga", ".opus"} or any(
         marker in ctype for marker in ["webm", "ogg", "opus"]

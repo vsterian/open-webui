@@ -423,11 +423,53 @@ def _process_media_with_soniox(
             else None
         )
 
-        normalized_path, normalized_filename = normalize_audio_file_for_soniox(
-            resolved_path,
-            filename=file_item.filename,
-            content_type=content_type,
-        )
+        source_suffix = Path(file_item.filename or resolved_path).suffix.lower()
+        is_video_input = (content_type or "").lower().startswith("video/") or source_suffix in {
+            ".mp4",
+            ".m4v",
+            ".mov",
+            ".qt",
+            ".mkv",
+            ".avi",
+            ".wmv",
+            ".flv",
+            ".mpeg",
+            ".mpg",
+        }
+
+        preprocessing = {
+            "mode": "video_to_audio" if is_video_input else "passthrough",
+            "state": "skipped",
+        }
+
+        if is_video_input:
+            Files.update_file_data_by_id(
+                file_item.id,
+                {"status": "pending", "progress": "Extracting audio for Soniox..."},
+                db=db_session,
+            )
+
+        try:
+            normalized_path, normalized_filename = normalize_audio_file_for_soniox(
+                resolved_path,
+                filename=file_item.filename,
+                content_type=content_type,
+            )
+            if is_video_input:
+                preprocessing["state"] = "completed"
+                preprocessing["extracted_file"] = normalized_filename
+        except SonioxError as exc:
+            if not is_video_input:
+                raise
+
+            log.warning(
+                "Audio extraction failed for %s, falling back to original upload: %s",
+                file_item.id,
+                exc,
+            )
+            normalized_path, normalized_filename = resolved_path, file_item.filename
+            preprocessing["state"] = "fallback"
+            preprocessing["error"] = str(exc)
 
         Files.update_file_data_by_id(
             file_item.id,
@@ -510,6 +552,7 @@ def _process_media_with_soniox(
             "transcription_id": result.get("transcription_id"),
             "state": str(result.get("status", "completed")).capitalize(),
             "progress": "100%",
+            "preprocessing": preprocessing,
             "insights": {
                 "languages": language_info,
                 "speakers": speakers,

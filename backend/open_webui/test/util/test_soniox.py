@@ -316,3 +316,69 @@ class TestNormalizeAudioForSoniox:
                     filename="meeting.webm",
                     content_type="audio/webm",
                 )
+
+    @patch("open_webui.utils.soniox.subprocess.run")
+    @patch("open_webui.utils.soniox.Path.exists")
+    def test_extract_video_to_mp3_for_video_input(self, mock_exists, mock_run):
+        mock_exists.return_value = True
+        mock_run.return_value = SimpleNamespace(returncode=0, stderr="")
+
+        out_path, out_name = normalize_audio_file_for_soniox(
+            "/tmp/meeting.mp4", filename="meeting.mp4", content_type="video/mp4"
+        )
+
+        assert out_path == "/tmp/meeting.soniox.mp3"
+        assert out_name == "meeting.mp3"
+
+        command = mock_run.call_args.args[0]
+        assert command[0] == "ffmpeg"
+        assert command[-1] == "/tmp/meeting.soniox.mp3"
+
+    @patch("open_webui.utils.soniox.subprocess.run")
+    @patch("open_webui.utils.soniox.Path.exists")
+    def test_extract_quicktime_mov_for_iphone_upload(self, mock_exists, mock_run):
+        mock_exists.return_value = True
+        mock_run.return_value = SimpleNamespace(returncode=0, stderr="")
+
+        out_path, out_name = normalize_audio_file_for_soniox(
+            "/tmp/iphone_clip.MOV",
+            filename="iphone_clip.MOV",
+            content_type="video/quicktime",
+        )
+
+        assert out_path == "/tmp/iphone_clip.soniox.mp3"
+        assert out_name == "iphone_clip.mp3"
+
+        command = mock_run.call_args.args[0]
+        assert command[0] == "ffmpeg"
+        assert command[-1] == "/tmp/iphone_clip.soniox.mp3"
+
+    @patch("open_webui.utils.soniox.subprocess.run")
+    @patch("open_webui.utils.soniox.Path.exists")
+    def test_extract_hevc_video_content_type_for_iphone_upload(self, mock_exists, mock_run):
+        mock_exists.return_value = True
+        mock_run.return_value = SimpleNamespace(returncode=0, stderr="")
+
+        out_path, out_name = normalize_audio_file_for_soniox(
+            "/tmp/iphone_hevc.mov",
+            filename="iphone_hevc.mov",
+            content_type="video/hevc",
+        )
+
+        assert out_path == "/tmp/iphone_hevc.soniox.mp3"
+        assert out_name == "iphone_hevc.mp3"
+
+        command = mock_run.call_args.args[0]
+        assert command[0] == "ffmpeg"
+        assert command[-1] == "/tmp/iphone_hevc.soniox.mp3"
+
+    @patch("open_webui.utils.soniox.subprocess.run")
+    @patch("open_webui.utils.soniox.Path.exists")
+    def test_video_extraction_failure_raises(self, mock_exists, mock_run):
+        mock_exists.return_value = True
+        mock_run.return_value = SimpleNamespace(returncode=1, stderr="ffmpeg failed")
+
+        with pytest.raises(SonioxError, match="Failed to extract audio from video"):
+            normalize_audio_file_for_soniox(
+                "/tmp/meeting.mp4", filename="meeting.mp4", content_type="video/mp4"
+            )
