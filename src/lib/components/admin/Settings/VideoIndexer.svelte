@@ -39,6 +39,13 @@
 	let SONIOX_MODEL = 'stt-async-v4';
 	let SONIOX_ENABLE_LANGUAGE_IDENTIFICATION = true;
 	let SONIOX_LANGUAGE_HINTS = '';
+	let SONIOX_ENABLE_SPEAKER_DIARIZATION = true;
+	let SONIOX_ENABLE_TRANSLATION = false;
+	let SONIOX_TRANSLATION_MODE = 'two_way';
+	let SONIOX_TRANSLATION_TARGET_LANGUAGE = 'en';
+	let SONIOX_TRANSLATION_SECOND_LANGUAGE = 'en';
+	let SONIOX_CONTEXT_TERMS = '';
+	let SONIOX_CONTEXT_TEXT = '';
 
 	const PROVIDER_OPTIONS = [
 		{ value: 'azure_video_indexer', label: 'Azure Video Indexer' },
@@ -131,6 +138,16 @@
 				SONIOX_ENABLE_LANGUAGE_IDENTIFICATION =
 					config.SONIOX_ENABLE_LANGUAGE_IDENTIFICATION ?? true;
 				SONIOX_LANGUAGE_HINTS = (config.SONIOX_LANGUAGE_HINTS ?? []).join(', ');
+				SONIOX_ENABLE_SPEAKER_DIARIZATION =
+					config.SONIOX_ENABLE_SPEAKER_DIARIZATION ?? true;
+				SONIOX_ENABLE_TRANSLATION = config.SONIOX_ENABLE_TRANSLATION ?? false;
+				SONIOX_TRANSLATION_MODE = config.SONIOX_TRANSLATION_MODE ?? 'two_way';
+				SONIOX_TRANSLATION_TARGET_LANGUAGE =
+					config.SONIOX_TRANSLATION_TARGET_LANGUAGE ?? 'en';
+				SONIOX_TRANSLATION_SECOND_LANGUAGE =
+					config.SONIOX_TRANSLATION_SECOND_LANGUAGE ?? 'en';
+				SONIOX_CONTEXT_TERMS = (config.SONIOX_CONTEXT_TERMS ?? []).join(', ');
+				SONIOX_CONTEXT_TEXT = config.SONIOX_CONTEXT_TEXT ?? '';
 			}
 		} catch (e) {
 			toast.error(`Failed to load Video Indexer config: ${e}`);
@@ -160,7 +177,17 @@
 				SONIOX_LANGUAGE_HINTS: SONIOX_LANGUAGE_HINTS
 					.split(',')
 					.map((item) => item.trim())
-					.filter(Boolean)
+					.filter(Boolean),
+				SONIOX_ENABLE_SPEAKER_DIARIZATION,
+				SONIOX_ENABLE_TRANSLATION,
+				SONIOX_TRANSLATION_MODE,
+				SONIOX_TRANSLATION_TARGET_LANGUAGE,
+				SONIOX_TRANSLATION_SECOND_LANGUAGE,
+				SONIOX_CONTEXT_TERMS: SONIOX_CONTEXT_TERMS
+					.split(',')
+					.map((item) => item.trim())
+					.filter(Boolean),
+				SONIOX_CONTEXT_TEXT
 			});
 			saveHandler();
 		} catch (e) {
@@ -483,6 +510,118 @@
 							/>
 							<div class="text-xs text-gray-400 mt-0.5">
 								{$i18n.t('Comma-separated ISO language codes, e.g. ro, en.')}
+							</div>
+						</div>
+
+						<hr class="border-gray-100 dark:border-gray-850 my-2" />
+
+						<!-- Speaker Diarization -->
+						<div class="flex items-center justify-between">
+							<div class="text-xs font-medium">{$i18n.t('Enable Speaker Diarization')}</div>
+							<button
+								type="button"
+								class="relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out {SONIOX_ENABLE_SPEAKER_DIARIZATION
+									? 'bg-blue-600'
+									: 'bg-gray-200 dark:bg-gray-700'}"
+								role="switch"
+								aria-checked={SONIOX_ENABLE_SPEAKER_DIARIZATION}
+								on:click={() =>
+									(SONIOX_ENABLE_SPEAKER_DIARIZATION = !SONIOX_ENABLE_SPEAKER_DIARIZATION)}
+							>
+								<span
+									class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out {SONIOX_ENABLE_SPEAKER_DIARIZATION
+										? 'translate-x-5'
+										: 'translate-x-0'}"
+								/>
+							</button>
+						</div>
+
+						<hr class="border-gray-100 dark:border-gray-850 my-2" />
+
+						<!-- Translation -->
+						<div class="flex items-center justify-between">
+							<div class="text-xs font-medium">{$i18n.t('Enable Translation')}</div>
+							<button
+								type="button"
+								class="relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out {SONIOX_ENABLE_TRANSLATION
+									? 'bg-blue-600'
+									: 'bg-gray-200 dark:bg-gray-700'}"
+								role="switch"
+								aria-checked={SONIOX_ENABLE_TRANSLATION}
+								on:click={() => (SONIOX_ENABLE_TRANSLATION = !SONIOX_ENABLE_TRANSLATION)}
+							>
+								<span
+									class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out {SONIOX_ENABLE_TRANSLATION
+										? 'translate-x-5'
+										: 'translate-x-0'}"
+								/>
+							</button>
+						</div>
+
+						{#if SONIOX_ENABLE_TRANSLATION}
+							<div>
+								<div class="text-xs font-medium mb-1">{$i18n.t('Translation Mode')}</div>
+								<select
+									class="w-full rounded-lg py-2 px-4 text-sm bg-gray-50 dark:text-gray-300 dark:bg-gray-850 outline-hidden"
+									bind:value={SONIOX_TRANSLATION_MODE}
+								>
+									<option value="two_way">{$i18n.t('Two-way (bidirectional)')}</option>
+									<option value="one_way">{$i18n.t('One-way')}</option>
+								</select>
+							</div>
+
+							{#if SONIOX_TRANSLATION_MODE === 'one_way'}
+								<div>
+									<div class="text-xs font-medium mb-1">{$i18n.t('Target Language')}</div>
+									<input
+										class="w-full rounded-lg py-2 px-4 text-sm bg-gray-50 dark:text-gray-300 dark:bg-gray-850 outline-hidden"
+										placeholder="en"
+										bind:value={SONIOX_TRANSLATION_TARGET_LANGUAGE}
+									/>
+									<div class="text-xs text-gray-400 mt-0.5">
+										{$i18n.t('ISO language code for one-way translation target.')}
+									</div>
+								</div>
+							{:else}
+								<div>
+									<div class="text-xs font-medium mb-1">{$i18n.t('Second Language')}</div>
+									<input
+										class="w-full rounded-lg py-2 px-4 text-sm bg-gray-50 dark:text-gray-300 dark:bg-gray-850 outline-hidden"
+										placeholder="en"
+										bind:value={SONIOX_TRANSLATION_SECOND_LANGUAGE}
+									/>
+									<div class="text-xs text-gray-400 mt-0.5">
+										{$i18n.t('ISO language code for the second language in two-way translation.')}
+									</div>
+								</div>
+							{/if}
+						{/if}
+
+						<hr class="border-gray-100 dark:border-gray-850 my-2" />
+
+						<!-- Context Enhancement -->
+						<div>
+							<div class="text-xs font-medium mb-1">{$i18n.t('Context Terms')}</div>
+							<input
+								class="w-full rounded-lg py-2 px-4 text-sm bg-gray-50 dark:text-gray-300 dark:bg-gray-850 outline-hidden"
+								placeholder="Bădeni, OpenWebUI"
+								bind:value={SONIOX_CONTEXT_TERMS}
+							/>
+							<div class="text-xs text-gray-400 mt-0.5">
+								{$i18n.t('Comma-separated terms to improve recognition accuracy.')}
+							</div>
+						</div>
+
+						<div>
+							<div class="text-xs font-medium mb-1">{$i18n.t('Context Text')}</div>
+							<textarea
+								class="w-full rounded-lg py-2 px-4 text-sm bg-gray-50 dark:text-gray-300 dark:bg-gray-850 outline-hidden"
+								rows="3"
+								placeholder="Provide context about the audio content..."
+								bind:value={SONIOX_CONTEXT_TEXT}
+							/>
+							<div class="text-xs text-gray-400 mt-0.5">
+								{$i18n.t('Free-text context to guide transcription (max ~10,000 characters).')}
 							</div>
 						</div>
 					</div>

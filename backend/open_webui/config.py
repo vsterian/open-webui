@@ -4323,6 +4323,52 @@ SONIOX_LANGUAGE_HINTS = PersistentConfig(
     ],
 )
 
+SONIOX_ENABLE_SPEAKER_DIARIZATION = PersistentConfig(
+    "SONIOX_ENABLE_SPEAKER_DIARIZATION",
+    "video_indexer.soniox.enable_speaker_diarization",
+    os.getenv("SONIOX_ENABLE_SPEAKER_DIARIZATION", "true").lower() == "true",
+)
+
+SONIOX_ENABLE_TRANSLATION = PersistentConfig(
+    "SONIOX_ENABLE_TRANSLATION",
+    "video_indexer.soniox.enable_translation",
+    os.getenv("SONIOX_ENABLE_TRANSLATION", "false").lower() == "true",
+)
+
+SONIOX_TRANSLATION_MODE = PersistentConfig(
+    "SONIOX_TRANSLATION_MODE",
+    "video_indexer.soniox.translation_mode",
+    os.getenv("SONIOX_TRANSLATION_MODE", "two_way"),
+)
+
+SONIOX_TRANSLATION_TARGET_LANGUAGE = PersistentConfig(
+    "SONIOX_TRANSLATION_TARGET_LANGUAGE",
+    "video_indexer.soniox.translation_target_language",
+    os.getenv("SONIOX_TRANSLATION_TARGET_LANGUAGE", "en"),
+)
+
+SONIOX_TRANSLATION_SECOND_LANGUAGE = PersistentConfig(
+    "SONIOX_TRANSLATION_SECOND_LANGUAGE",
+    "video_indexer.soniox.translation_second_language",
+    os.getenv("SONIOX_TRANSLATION_SECOND_LANGUAGE", "en"),
+)
+
+SONIOX_CONTEXT_TERMS = PersistentConfig(
+    "SONIOX_CONTEXT_TERMS",
+    "video_indexer.soniox.context_terms",
+    [
+        item.strip()
+        for item in os.getenv("SONIOX_CONTEXT_TERMS", "").split(",")
+        if item.strip()
+    ],
+)
+
+SONIOX_CONTEXT_TEXT = PersistentConfig(
+    "SONIOX_CONTEXT_TEXT",
+    "video_indexer.soniox.context_text",
+    os.getenv("SONIOX_CONTEXT_TEXT", ""),
+)
+
 
 ####################################
 # LDAP

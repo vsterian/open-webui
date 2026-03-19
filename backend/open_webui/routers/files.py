@@ -474,10 +474,33 @@ def _process_media_with_soniox(
         language_info = result.get("languages") or []
         language_label = ", ".join(language_info) if language_info else "unknown"
 
-        final_content = (
-            f"[Source: {file_item.filename} | Provider: Soniox | Languages: {language_label}]\n\n"
-            f"{transcript_text}"
-        )
+        speakers = result.get("speakers") or []
+        speaker_segments = result.get("speaker_segments") or []
+        translated_text = result.get("translated_text") or ""
+
+        # Build rich content for RAG pipeline
+        header = f"[Source: {file_item.filename} | Provider: Soniox | Languages: {language_label}"
+        if speakers:
+            header += f" | Speakers: {len(speakers)}"
+        header += "]"
+
+        content_parts = [header, ""]
+
+        if speaker_segments:
+            content_parts.append("## Transcript (by speaker)\n")
+            for seg in speaker_segments:
+                start = seg.get("start_s")
+                ts = f" [{start:.1f}s]" if start is not None else ""
+                content_parts.append(f"**Speaker {seg['speaker']}**{ts}: {seg['text']}")
+            content_parts.append("")
+        else:
+            content_parts.append(transcript_text)
+
+        if translated_text:
+            content_parts.append("\n## Translation\n")
+            content_parts.append(translated_text)
+
+        final_content = "\n".join(content_parts)
 
         meta = file_item.meta if isinstance(file_item.meta, dict) else {}
         meta["analyzer_provider"] = "soniox"
@@ -489,6 +512,9 @@ def _process_media_with_soniox(
             "progress": "100%",
             "insights": {
                 "languages": language_info,
+                "speakers": speakers,
+                "speaker_segments": speaker_segments,
+                "translated_text": translated_text,
                 "tokens": result.get("tokens") or [],
                 "transcription": result.get("transcription") or {},
                 "transcript": result.get("transcript") or {},

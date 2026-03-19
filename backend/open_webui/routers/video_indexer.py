@@ -43,6 +43,13 @@ class VideoIndexerConfigForm(BaseModel):
     SONIOX_MODEL: str = "stt-async-v4"
     SONIOX_ENABLE_LANGUAGE_IDENTIFICATION: bool = True
     SONIOX_LANGUAGE_HINTS: list[str] = []
+    SONIOX_ENABLE_SPEAKER_DIARIZATION: bool = True
+    SONIOX_ENABLE_TRANSLATION: bool = False
+    SONIOX_TRANSLATION_MODE: str = "two_way"
+    SONIOX_TRANSLATION_TARGET_LANGUAGE: str = "en"
+    SONIOX_TRANSLATION_SECOND_LANGUAGE: str = "en"
+    SONIOX_CONTEXT_TERMS: list[str] = []
+    SONIOX_CONTEXT_TEXT: str = ""
 
 
 # ──────────────────────────────────────────────
@@ -70,6 +77,13 @@ async def get_video_indexer_config(request: Request, user=Depends(get_admin_user
         "SONIOX_MODEL": request.app.state.config.SONIOX_MODEL,
         "SONIOX_ENABLE_LANGUAGE_IDENTIFICATION": request.app.state.config.SONIOX_ENABLE_LANGUAGE_IDENTIFICATION,
         "SONIOX_LANGUAGE_HINTS": request.app.state.config.SONIOX_LANGUAGE_HINTS,
+        "SONIOX_ENABLE_SPEAKER_DIARIZATION": request.app.state.config.SONIOX_ENABLE_SPEAKER_DIARIZATION,
+        "SONIOX_ENABLE_TRANSLATION": request.app.state.config.SONIOX_ENABLE_TRANSLATION,
+        "SONIOX_TRANSLATION_MODE": request.app.state.config.SONIOX_TRANSLATION_MODE,
+        "SONIOX_TRANSLATION_TARGET_LANGUAGE": request.app.state.config.SONIOX_TRANSLATION_TARGET_LANGUAGE,
+        "SONIOX_TRANSLATION_SECOND_LANGUAGE": request.app.state.config.SONIOX_TRANSLATION_SECOND_LANGUAGE,
+        "SONIOX_CONTEXT_TERMS": request.app.state.config.SONIOX_CONTEXT_TERMS,
+        "SONIOX_CONTEXT_TEXT": request.app.state.config.SONIOX_CONTEXT_TEXT,
     }
 
 
@@ -98,6 +112,21 @@ async def update_video_indexer_config(
         form_data.SONIOX_ENABLE_LANGUAGE_IDENTIFICATION
     )
     request.app.state.config.SONIOX_LANGUAGE_HINTS = form_data.SONIOX_LANGUAGE_HINTS
+    request.app.state.config.SONIOX_ENABLE_SPEAKER_DIARIZATION = (
+        form_data.SONIOX_ENABLE_SPEAKER_DIARIZATION
+    )
+    request.app.state.config.SONIOX_ENABLE_TRANSLATION = (
+        form_data.SONIOX_ENABLE_TRANSLATION
+    )
+    request.app.state.config.SONIOX_TRANSLATION_MODE = form_data.SONIOX_TRANSLATION_MODE
+    request.app.state.config.SONIOX_TRANSLATION_TARGET_LANGUAGE = (
+        form_data.SONIOX_TRANSLATION_TARGET_LANGUAGE
+    )
+    request.app.state.config.SONIOX_TRANSLATION_SECOND_LANGUAGE = (
+        form_data.SONIOX_TRANSLATION_SECOND_LANGUAGE
+    )
+    request.app.state.config.SONIOX_CONTEXT_TERMS = form_data.SONIOX_CONTEXT_TERMS
+    request.app.state.config.SONIOX_CONTEXT_TEXT = form_data.SONIOX_CONTEXT_TEXT
 
     return {
         "ENABLED": request.app.state.config.VIDEO_INDEXER_ENABLED,
@@ -117,6 +146,13 @@ async def update_video_indexer_config(
         "SONIOX_MODEL": request.app.state.config.SONIOX_MODEL,
         "SONIOX_ENABLE_LANGUAGE_IDENTIFICATION": request.app.state.config.SONIOX_ENABLE_LANGUAGE_IDENTIFICATION,
         "SONIOX_LANGUAGE_HINTS": request.app.state.config.SONIOX_LANGUAGE_HINTS,
+        "SONIOX_ENABLE_SPEAKER_DIARIZATION": request.app.state.config.SONIOX_ENABLE_SPEAKER_DIARIZATION,
+        "SONIOX_ENABLE_TRANSLATION": request.app.state.config.SONIOX_ENABLE_TRANSLATION,
+        "SONIOX_TRANSLATION_MODE": request.app.state.config.SONIOX_TRANSLATION_MODE,
+        "SONIOX_TRANSLATION_TARGET_LANGUAGE": request.app.state.config.SONIOX_TRANSLATION_TARGET_LANGUAGE,
+        "SONIOX_TRANSLATION_SECOND_LANGUAGE": request.app.state.config.SONIOX_TRANSLATION_SECOND_LANGUAGE,
+        "SONIOX_CONTEXT_TERMS": request.app.state.config.SONIOX_CONTEXT_TERMS,
+        "SONIOX_CONTEXT_TEXT": request.app.state.config.SONIOX_CONTEXT_TEXT,
     }
 
 

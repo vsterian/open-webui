@@ -81,12 +81,26 @@ class SonioxClient:
         model: str = DEFAULT_MODEL,
         enable_language_identification: bool = True,
         language_hints: Optional[list[str]] = None,
+        enable_speaker_diarization: bool = True,
+        enable_translation: bool = False,
+        translation_mode: str = "two_way",
+        translation_target_language: str = "en",
+        translation_second_language: str = "en",
+        context_terms: Optional[list[str]] = None,
+        context_text: str = "",
     ):
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.enable_language_identification = enable_language_identification
         self.language_hints = language_hints or []
+        self.enable_speaker_diarization = enable_speaker_diarization
+        self.enable_translation = enable_translation
+        self.translation_mode = translation_mode
+        self.translation_target_language = translation_target_language
+        self.translation_second_language = translation_second_language
+        self.context_terms = context_terms or []
+        self.context_text = context_text or ""
 
     @property
     def _headers(self) -> dict[str, str]:
@@ -165,6 +179,30 @@ class SonioxClient:
 
         if self.language_hints:
             body["language_hints"] = self.language_hints
+
+        if self.enable_speaker_diarization:
+            body["enable_speaker_diarization"] = True
+
+        if self.enable_translation:
+            if self.translation_mode == "two_way":
+                body["translation"] = {
+                    "type": "two_way",
+                    "language_a": self.language_hints[0] if self.language_hints else "auto",
+                    "language_b": self.translation_second_language or "en",
+                }
+            else:
+                body["translation"] = {
+                    "type": "one_way",
+                    "target_language": self.translation_target_language or "en",
+                }
+
+        context: dict[str, Any] = {}
+        if self.context_terms:
+            context["terms"] = self.context_terms
+        if self.context_text:
+            context["text"] = self.context_text
+        if context:
+            body["context"] = context
 
         if client_reference_id:
             body["client_reference_id"] = client_reference_id
@@ -274,6 +312,8 @@ class SonioxClient:
             )
 
         languages: list[str] = []
+        speakers: list[str] = []
+        has_translation = False
         if isinstance(tokens, list):
             for token in tokens:
                 if not isinstance(token, dict):
@@ -281,12 +321,78 @@ class SonioxClient:
                 language = token.get("language")
                 if language and language not in languages:
                     languages.append(language)
+                speaker = token.get("speaker")
+                if speaker and speaker not in speakers:
+                    speakers.append(speaker)
+                if token.get("translation_status") in ("original", "translation"):
+                    has_translation = True
 
-        return {
+        result: dict[str, Any] = {
             "text": text.strip(),
             "tokens": tokens if isinstance(tokens, list) else [],
             "languages": languages,
         }
+
+        if speakers:
+            result["speakers"] = speakers
+            result["speaker_segments"] = SonioxClient._build_speaker_segments(tokens)
+
+        if has_translation:
+            result["translated_text"] = SonioxClient._build_translated_text(tokens)
+
+        return result
+
+    @staticmethod
+    def _build_speaker_segments(tokens: list[dict]) -> list[dict[str, Any]]:
+        """Group consecutive tokens by speaker into segments."""
+        segments: list[dict[str, Any]] = []
+        current_speaker = None
+        current_text = ""
+        segment_start = None
+
+        for token in tokens:
+            if not isinstance(token, dict):
+                continue
+            # Skip translation tokens for speaker segments
+            if token.get("translation_status") == "translation":
+                continue
+
+            speaker = token.get("speaker") or "unknown"
+            token_text = token.get("text", "")
+            start_time = token.get("start_s")
+
+            if speaker != current_speaker:
+                if current_speaker is not None and current_text.strip():
+                    segments.append({
+                        "speaker": current_speaker,
+                        "text": current_text.strip(),
+                        "start_s": segment_start,
+                    })
+                current_speaker = speaker
+                current_text = token_text
+                segment_start = start_time
+            else:
+                current_text += token_text
+
+        if current_speaker is not None and current_text.strip():
+            segments.append({
+                "speaker": current_speaker,
+                "text": current_text.strip(),
+                "start_s": segment_start,
+            })
+
+        return segments
+
+    @staticmethod
+    def _build_translated_text(tokens: list[dict]) -> str:
+        """Extract only the translated tokens into a single text."""
+        parts = []
+        for token in tokens:
+            if not isinstance(token, dict):
+                continue
+            if token.get("translation_status") == "translation":
+                parts.append(token.get("text", ""))
+        return "".join(parts).strip()
 
     def transcribe_file(
         self,
@@ -317,9 +423,7 @@ class SonioxClient:
             "file_id": file_id,
             "transcription_id": transcription_id,
             "status": transcription_info.get("status", "completed"),
-            "text": extracted["text"],
-            "tokens": extracted["tokens"],
-            "languages": extracted["languages"],
+            **extracted,
             "transcription": transcription_info,
             "transcript": transcript_payload,
         }
@@ -340,10 +444,38 @@ def build_soniox_client_from_config(config) -> SonioxClient:
             item.strip() for item in language_hints.split(",") if item.strip()
         ]
 
+    enable_speaker_diarization = bool(
+        getattr(config, "SONIOX_ENABLE_SPEAKER_DIARIZATION", True)
+    )
+    enable_translation = bool(
+        getattr(config, "SONIOX_ENABLE_TRANSLATION", False)
+    )
+    translation_mode = getattr(config, "SONIOX_TRANSLATION_MODE", "two_way") or "two_way"
+    translation_target_language = (
+        getattr(config, "SONIOX_TRANSLATION_TARGET_LANGUAGE", "en") or "en"
+    )
+    translation_second_language = (
+        getattr(config, "SONIOX_TRANSLATION_SECOND_LANGUAGE", "en") or "en"
+    )
+
+    context_terms = getattr(config, "SONIOX_CONTEXT_TERMS", []) or []
+    if isinstance(context_terms, str):
+        context_terms = [
+            item.strip() for item in context_terms.split(",") if item.strip()
+        ]
+    context_text = getattr(config, "SONIOX_CONTEXT_TEXT", "") or ""
+
     return SonioxClient(
         api_key=api_key,
         base_url=base_url,
         model=model,
         enable_language_identification=enable_lid,
         language_hints=language_hints,
+        enable_speaker_diarization=enable_speaker_diarization,
+        enable_translation=enable_translation,
+        translation_mode=translation_mode,
+        translation_target_language=translation_target_language,
+        translation_second_language=translation_second_language,
+        context_terms=context_terms,
+        context_text=context_text,
     )
