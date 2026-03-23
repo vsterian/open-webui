@@ -56,6 +56,7 @@ type UploadSessionResponse = {
 	upload_mode?: 'azure_sas' | 'azure_server_staged' | 'app_mediated';
 	azure_blob_url?: string;
 	azure_blob_sas_token?: string;
+	azure_blob_x_ms_version?: string;
 };
 
 const createUploadSession = async (
@@ -193,6 +194,33 @@ const finalizeUploadSession = async (token: string, sessionId: string) => {
 	return await res.json();
 };
 
+type UploadSessionStatus = {
+	session_id: string;
+	filename: string;
+	chunk_size: number;
+	total_chunks: number;
+	uploaded_chunks: number;
+	uploaded_chunk_indexes: number[];
+	uploaded_bytes: number;
+	state: string;
+};
+
+const getUploadSession = async (token: string, sessionId: string): Promise<UploadSessionStatus> => {
+	const res = await fetch(`${WEBUI_API_BASE_URL}/files/uploads/sessions/${sessionId}`, {
+		method: 'GET',
+		headers: {
+			Accept: 'application/json',
+			authorization: `Bearer ${token}`
+		}
+	});
+
+	if (!res.ok) {
+		throw await res.json();
+	}
+
+	return await res.json();
+};
+
 const buildAzureBlockId = (chunkIndex: number): string => {
 	const raw = `block-${String(chunkIndex).padStart(8, '0')}`;
 	return btoa(raw);
@@ -214,7 +242,8 @@ const stageAzureBlock = async (
 	blobUrl: string,
 	sasToken: string,
 	blockId: string,
-	chunk: Blob
+	chunk: Blob,
+	xMsVersion = '2024-11-04'
 ) => {
 	let response: Response | null = null;
 	let lastError: unknown = null;
@@ -225,7 +254,7 @@ const stageAzureBlock = async (
 			response = await fetch(url, {
 				method: 'PUT',
 				headers: {
-					'x-ms-version': '2023-11-03'
+					'x-ms-version': xMsVersion
 				},
 				body: chunk
 			});
@@ -286,7 +315,7 @@ const uploadLargeMediaFileAzureDirect = async (
 			const chunk = file.slice(start, end);
 			const blockId = buildAzureBlockId(currentChunkIndex);
 
-			await stageAzureBlock(blobUrl, sasToken, blockId, chunk);
+			await stageAzureBlock(blobUrl, sasToken, blockId, chunk, session.azure_blob_x_ms_version || '2024-11-04');
 			blockIds[currentChunkIndex] = blockId;
 
 			uploadedChunkCount += 1;
@@ -365,10 +394,33 @@ const uploadLargeMediaFile = async (
 		session.total_chunks || 0,
 		Math.ceil(file.size / chunkSize)
 	);
+
+	// Resume support: check for already-uploaded chunks
+	const alreadyUploaded = new Set<number>();
+	try {
+		const sessionStatus = await getUploadSession(token, session.session_id);
+		if (sessionStatus.uploaded_chunk_indexes && sessionStatus.uploaded_chunk_indexes.length > 0) {
+			for (const idx of sessionStatus.uploaded_chunk_indexes) {
+				alreadyUploaded.add(idx);
+			}
+			console.log(`Resuming upload: ${alreadyUploaded.size}/${totalChunks} chunks already uploaded`);
+		}
+	} catch {
+		// Session status unavailable; upload all chunks from scratch
+	}
+
 	let nextChunkIndex = 0;
-	let uploadedChunkCount = 0;
+	let uploadedChunkCount = alreadyUploaded.size;
 	const uploadStartTime = Date.now();
 	let totalBytesConfirmed = 0;
+
+	// Account for already-uploaded bytes
+	for (const idx of alreadyUploaded) {
+		const start = idx * chunkSize;
+		const end = Math.min(start + chunkSize, file.size);
+		totalBytesConfirmed += (end - start);
+	}
+
 	// For single-chunk uploads, track in-flight byte progress for real-time updates
 	const isSingleChunk = totalChunks === 1;
 	let inFlightBytes = 0;
@@ -379,13 +431,19 @@ const uploadLargeMediaFile = async (
 			: RESUMABLE_PARALLEL_CHUNK_UPLOADS;
 	const workerCount = Math.max(
 		1,
-		Math.min(maxWorkers, totalChunks)
+		Math.min(maxWorkers, totalChunks - alreadyUploaded.size)
 	);
 
 	const uploadWorker = async () => {
 		while (true) {
-			const currentChunkIndex = nextChunkIndex;
+			let currentChunkIndex = nextChunkIndex;
 			nextChunkIndex += 1;
+
+			// Skip already-uploaded chunks
+			while (currentChunkIndex < totalChunks && alreadyUploaded.has(currentChunkIndex)) {
+				currentChunkIndex = nextChunkIndex;
+				nextChunkIndex += 1;
+			}
 
 			if (currentChunkIndex >= totalChunks) {
 				return;
@@ -696,6 +754,9 @@ export const searchFiles = async (
 };
 
 export const getFileById = async (token: string, id: string) => {
+	if (!id || id === 'null' || id === 'undefined') {
+		return null;
+	}
 	let error = null;
 
 	const res = await fetch(`${WEBUI_API_BASE_URL}/files/${id}`, {

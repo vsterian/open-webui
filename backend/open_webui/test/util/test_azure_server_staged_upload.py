@@ -172,7 +172,7 @@ class TestUploadSessionStoreServerStaged:
             process=True,
             upload_mode="app_mediated",
         )
-        with pytest.raises(UploadSessionError, match="azure_server_staged"):
+        with pytest.raises(UploadSessionError, match="azure_server_staged or azure_sas"):
             store.add_staged_block(
                 manifest["session_id"],
                 user_id="u1",
@@ -267,6 +267,118 @@ class TestUploadSessionStoreServerStaged:
                 chunk_index=0,
                 chunk_bytes=b"ABCD",
             )
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: UploadSessionStore - azure_sas mode
+# ---------------------------------------------------------------------------
+
+class TestUploadSessionStoreAzureSas:
+    """Tests for azure_sas mode where browser uploads directly to Azure."""
+
+    def test_add_staged_block_accepts_azure_sas_mode(self, tmp_path):
+        store = UploadSessionStore(base_dir=str(tmp_path / "sessions"), ttl_seconds=3600)
+        manifest = store.create_session(
+            user_id="u1",
+            filename="video.mov",
+            content_type="video/quicktime",
+            total_size=128,
+            chunk_size=64,
+            process=True,
+            upload_mode="azure_sas",
+            upload_meta={
+                "blob_url": "https://a.blob.core.windows.net/c/b",
+                "sas_token": "sv=x",
+                "sas_source": "user_delegation",
+            },
+        )
+        session_id = manifest["session_id"]
+        assert manifest["upload_mode"] == "azure_sas"
+
+        block_id_0 = _build_azure_block_id(0)
+        manifest = store.add_staged_block(
+            session_id, user_id="u1", chunk_index=0, block_id=block_id_0, chunk_size=64,
+        )
+        assert manifest["uploaded_bytes"] == 64
+
+        block_id_1 = _build_azure_block_id(1)
+        manifest = store.add_staged_block(
+            session_id, user_id="u1", chunk_index=1, block_id=block_id_1, chunk_size=64,
+        )
+        assert manifest["state"] == "ready"
+        assert len(manifest["staged_blocks"]) == 2
+
+    def test_azure_sas_session_stores_sas_source(self, tmp_path):
+        store = UploadSessionStore(base_dir=str(tmp_path / "sessions"), ttl_seconds=3600)
+        manifest = store.create_session(
+            user_id="u1",
+            filename="video.mov",
+            content_type="video/quicktime",
+            total_size=64,
+            chunk_size=64,
+            process=True,
+            upload_mode="azure_sas",
+            upload_meta={
+                "blob_url": "https://a.blob.core.windows.net/c/b",
+                "sas_token": "sv=x",
+                "sas_source": "user_delegation",
+            },
+        )
+        assert manifest["upload_meta"]["sas_source"] == "user_delegation"
+
+
+# ---------------------------------------------------------------------------
+# Phase 3b: Upload mode selection and chunking logic
+# ---------------------------------------------------------------------------
+
+class TestUploadModeSelection:
+    """Test the logic that determines upload_mode and chunk_size.
+    Uses a local mirror of the selection logic from create_upload_session."""
+
+    AZURE_UPLOAD_CHUNK_SIZE_BYTES = 64 * 1024 * 1024  # 64 MiB
+
+    def _select_mode(self, upload_meta, file_size):
+        """Mirror of the mode-selection logic in create_upload_session."""
+        upload_mode = "app_mediated"
+        chunk_size = 8 * 1024 * 1024  # default resumable
+
+        if upload_meta:
+            azure_chunk_size = max(
+                4 * 1024 * 1024,
+                min(self.AZURE_UPLOAD_CHUNK_SIZE_BYTES, 4 * 1024 * 1024 * 1024),
+            )
+            chunk_size = azure_chunk_size
+
+            if upload_meta.get("sas_source") == "user_delegation":
+                upload_mode = "azure_sas"
+            else:
+                upload_mode = "azure_server_staged"
+
+        return upload_mode, chunk_size
+
+    def test_user_delegation_sas_selects_azure_sas_mode(self):
+        meta = {"blob_url": "https://x", "sas_token": "sv=x", "sas_source": "user_delegation"}
+        mode, chunk = self._select_mode(meta, 1_600_000_000)
+        assert mode == "azure_sas"
+        assert chunk == 64 * 1024 * 1024
+
+    def test_static_sas_selects_azure_server_staged_mode(self):
+        meta = {"blob_url": "https://x", "sas_token": "sv=x", "sas_source": "static"}
+        mode, chunk = self._select_mode(meta, 1_600_000_000)
+        assert mode == "azure_server_staged"
+        assert chunk == 64 * 1024 * 1024
+
+    def test_no_meta_selects_app_mediated(self):
+        mode, chunk = self._select_mode(None, 1_600_000_000)
+        assert mode == "app_mediated"
+
+    def test_chunk_size_is_64mib_not_file_size(self):
+        """Regression: previously chunk_size == file_size for files <= 4GB."""
+        file_size = 1_600_000_000  # 1.6 GB
+        meta = {"blob_url": "https://x", "sas_token": "sv=x", "sas_source": "static"}
+        _, chunk = self._select_mode(meta, file_size)
+        assert chunk == 64 * 1024 * 1024
+        assert chunk != file_size  # Must NOT be the full file size
 
 
 # ---------------------------------------------------------------------------

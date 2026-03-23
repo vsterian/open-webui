@@ -55,10 +55,12 @@ from open_webui.config import (
     STORAGE_PROVIDER,
     AZURE_STORAGE_ENDPOINT,
     AZURE_STORAGE_CONTAINER_NAME,
+    AZURE_UPLOAD_CHUNK_SIZE_BYTES,
 )
 from open_webui.utils.auth import get_admin_user, get_verified_user
 from open_webui.utils.misc import strict_match_mime_type
 from open_webui.utils.upload_sessions import UploadSessionError, UploadSessionStore
+from open_webui.utils.azure_blob_sas import generate_upload_sas
 from open_webui.utils.video_indexer import (
     VideoIndexerClient,
     VideoIndexerError,
@@ -254,9 +256,8 @@ def _build_azure_block_id(chunk_index: int) -> str:
     return base64.b64encode(raw).decode("utf-8")
 
 
-def _build_azure_upload_meta(request: Request, session_id: str, filename: str) -> Optional[dict]:
-    sas_token_raw = getattr(request.app.state.config, "VIDEO_INDEXER_AZURE_BLOB_SAS", "")
-    sas_token = _normalize_sas_token(sas_token_raw)
+def _resolve_azure_endpoint_and_container(request: Request):
+    """Return (endpoint, container) from config, or (None, None) if unconfigured."""
     endpoint = str(
         getattr(request.app.state.config, "VIDEO_INDEXER_AZURE_BLOB_ENDPOINT", "")
         or AZURE_STORAGE_ENDPOINT
@@ -267,37 +268,81 @@ def _build_azure_upload_meta(request: Request, session_id: str, filename: str) -
         or AZURE_STORAGE_CONTAINER_NAME
         or ""
     ).strip("/")
-    if not sas_token or not endpoint or not container:
+    if not endpoint or not container:
+        return None, None
+    return endpoint, container
+
+
+def _build_azure_upload_meta(
+    request: Request,
+    session_id: str,
+    filename: str,
+    allow_azure_sas: bool = True,
+) -> Optional[dict]:
+    """Build Azure blob metadata for an upload session.
+
+    Tries dynamic user-delegation SAS first (managed identity).
+    Falls back to static SAS from VIDEO_INDEXER_AZURE_BLOB_SAS config.
+    Returns None if neither is available.
+    """
+    endpoint, container = _resolve_azure_endpoint_and_container(request)
+    if not endpoint or not container:
         return None
 
     blob_name = f"{session_id}_{os.path.basename(filename)}"
     blob_url = f"{endpoint}/{container}/{quote(blob_name)}"
+
+    # --- Try dynamic user-delegation SAS (preferred) ---
+    if allow_azure_sas:
+        try:
+            sas_token = generate_upload_sas(
+                account_url=endpoint,
+                container_name=container,
+                blob_name=blob_name,
+                expiry_minutes=120,
+            )
+            return {
+                "blob_name": blob_name,
+                "blob_url": blob_url,
+                "sas_token": sas_token,
+                "sas_source": "user_delegation",
+            }
+        except Exception:
+            log.warning(
+                "Dynamic SAS generation failed; falling back to static SAS",
+                exc_info=True,
+            )
+
+    # --- Fall back to static SAS token from config ---
+    sas_token_raw = getattr(request.app.state.config, "VIDEO_INDEXER_AZURE_BLOB_SAS", "")
+    sas_token = _normalize_sas_token(sas_token_raw)
+    if not sas_token:
+        return None
+
+    log.info("Using static SAS token for upload session %s", session_id)
     return {
         "blob_name": blob_name,
         "blob_url": blob_url,
         "sas_token": sas_token,
+        "sas_source": "static",
     }
 
 
 def _resolve_blob_to_local(request: Request, file_path: str, file_item) -> str:
     """Download an Azure blob to local disk if file_path is a remote URL.
 
-    After azure_server_staged uploads the file record stores a blob URL
-    (https://...) as file_path.  Processing code (ffmpeg, Soniox upload)
-    requires a local file.  This helper transparently downloads the blob
-    using the Video Indexer SAS token and returns a local path.  If the
-    path is already local it is returned unchanged.
+    After azure_sas / azure_server_staged uploads the file record stores a
+    blob URL (https://...) as file_path.  Processing code (ffmpeg, Soniox
+    upload) requires a local file.  This helper transparently downloads the
+    blob and returns a local path.  If the path is already local it is
+    returned unchanged.
+
+    Authentication priority:
+    1. Managed identity (DefaultAzureCredential)
+    2. Static SAS from VIDEO_INDEXER_AZURE_BLOB_SAS config
     """
     if not file_path or not file_path.startswith(("https://", "http://")):
         return file_path
-
-    sas_raw = getattr(request.app.state.config, "VIDEO_INDEXER_AZURE_BLOB_SAS", "")
-    sas_token = _normalize_sas_token(sas_raw)
-    if not sas_token:
-        raise RuntimeError(
-            "Cannot download blob for processing: "
-            "VIDEO_INDEXER_AZURE_BLOB_SAS is not configured"
-        )
 
     local_filename = f"{file_item.id}_{os.path.basename(file_item.filename or 'blob')}"
     local_path = os.path.join(UPLOAD_DIR, local_filename)
@@ -307,7 +352,35 @@ def _resolve_blob_to_local(request: Request, file_path: str, file_item) -> str:
         return local_path
 
     log.info("Downloading blob to local disk: %s -> %s", file_path, local_path)
-    blob_client = BlobClient.from_blob_url(f"{file_path}?{sas_token}")
+
+    # Try managed identity first, then fall back to static SAS
+    blob_client = None
+    try:
+        from azure.identity import DefaultAzureCredential as _DACResolve
+        from azure.storage.blob import BlobClient as _BlobClientResolve
+        endpoint, container = _resolve_azure_endpoint_and_container(request)
+        if endpoint and container:
+            # Extract blob name from the URL
+            prefix = f"{endpoint}/{container}/"
+            if file_path.startswith(prefix):
+                blob_name = file_path[len(prefix):]
+                from azure.storage.blob import BlobServiceClient as _BscResolve
+                _bsc = _BscResolve(account_url=endpoint, credential=_DACResolve())
+                blob_client = _bsc.get_blob_client(container, blob_name)
+    except Exception:
+        log.debug("Managed identity blob download failed, trying static SAS", exc_info=True)
+        blob_client = None
+
+    if blob_client is None:
+        sas_raw = getattr(request.app.state.config, "VIDEO_INDEXER_AZURE_BLOB_SAS", "")
+        sas_token = _normalize_sas_token(sas_raw)
+        if not sas_token:
+            raise RuntimeError(
+                "Cannot download blob for processing: "
+                "neither managed identity nor VIDEO_INDEXER_AZURE_BLOB_SAS is available"
+            )
+        blob_client = BlobClient.from_blob_url(f"{file_path}?{sas_token}")
+
     tmp_path = local_path + ".tmp"
     try:
         with open(tmp_path, "wb") as f:
@@ -406,26 +479,30 @@ def create_upload_session(
         upload_meta = None
         upload_mode = "app_mediated"
         if _is_media_content_type(form_data.content_type):
-            upload_meta = _build_azure_upload_meta(request, session_id, form_data.filename)
+            upload_meta = _build_azure_upload_meta(
+                request,
+                session_id,
+                form_data.filename,
+                allow_azure_sas=form_data.allow_azure_sas,
+            )
             if upload_meta:
-                upload_mode = "azure_server_staged"
-                # Send the entire file as a single Azure Put Block call
-                # (Azure SDK v12 supports up to 4 GB per block).
-                # For files larger than 4 GB, fall back to multi-block with
-                # AZURE_UPLOAD_CHUNK_SIZE_BYTES.
-                max_single_block = 4 * 1024 * 1024 * 1024  # 4 GB
-                if form_data.size <= max_single_block:
-                    chunk_size = form_data.size
+                # Always chunk Azure uploads using AZURE_UPLOAD_CHUNK_SIZE_BYTES
+                # (default 64 MiB).  The previous behaviour of sending the
+                # entire file in one stage_block call caused timeouts for
+                # files over ~600 MB.
+                azure_chunk_size = max(
+                    4 * 1024 * 1024,
+                    min(AZURE_UPLOAD_CHUNK_SIZE_BYTES, 4 * 1024 * 1024 * 1024),
+                )
+                chunk_size = azure_chunk_size
+
+                # Determine upload mode based on SAS source:
+                # - user_delegation → azure_sas (browser uploads directly)
+                # - static          → azure_server_staged (chunks proxied via backend)
+                if upload_meta.get("sas_source") == "user_delegation":
+                    upload_mode = "azure_sas"
                 else:
-                    azure_chunk_size = int(
-                        getattr(
-                            request.app.state.config,
-                            "AZURE_UPLOAD_CHUNK_SIZE_BYTES",
-                            64 * 1024 * 1024,
-                        )
-                        or (64 * 1024 * 1024)
-                    )
-                    chunk_size = max(4 * 1024 * 1024, min(azure_chunk_size, max_single_block))
+                    upload_mode = "azure_server_staged"
 
         session = store.create_session(
             user_id=user.id,
@@ -469,6 +546,9 @@ def create_upload_session(
         response["azure_blob_sas_token"] = session.get("upload_meta", {}).get(
             "sas_token", ""
         )
+        # Tell the browser which x-ms-version to send so it matches the SAS sv=
+        from azure.storage.blob._shared.constants import X_MS_VERSION as _BLOB_X_MS_VERSION
+        response["azure_blob_x_ms_version"] = _BLOB_X_MS_VERSION
 
     return response
 
@@ -494,6 +574,9 @@ def get_upload_session(
         "chunk_size": session["chunk_size"],
         "total_chunks": session["total_chunks"],
         "uploaded_chunks": len(session.get("uploaded_chunks", {})),
+        "uploaded_chunk_indexes": [
+            int(k) for k in sorted(session.get("uploaded_chunks", {}), key=int)
+        ],
         "uploaded_bytes": session.get("uploaded_bytes", 0),
         "state": session.get("state", "uploading"),
     }
@@ -582,8 +665,11 @@ def finalize_upload_session(
             upload_meta = session.get("upload_meta", {})
             blob_url = upload_meta.get("blob_url", "")
             sas_token = upload_meta.get("sas_token", "")
-            if not blob_url or not sas_token:
-                raise UploadSessionError("Azure upload metadata is missing")
+
+            if session.get("upload_mode") == "azure_server_staged":
+                # server-staged: blocks were staged by the backend via SAS
+                if not blob_url or not sas_token:
+                    raise UploadSessionError("Azure upload metadata is missing")
 
             if session.get("upload_mode") == "azure_server_staged":
                 staged_blocks = session.get("staged_blocks", {})
@@ -607,8 +693,35 @@ def finalize_upload_session(
             if not block_ids:
                 raise UploadSessionError("No Azure block ids available for finalize")
 
-            blob_client = BlobClient.from_blob_url(f"{blob_url}?{sas_token}")
-            blob_client.commit_block_list(block_ids)
+            # Commit the block list.
+            # azure_sas: browser uploaded blocks directly; commit with
+            #   managed identity so the client SAS only needs write perms.
+            # azure_server_staged: backend staged blocks; commit via SAS.
+            if session.get("upload_mode") == "azure_sas":
+                endpoint, container = _resolve_azure_endpoint_and_container(request)
+                blob_name = upload_meta.get("blob_name", "")
+                if not endpoint or not container or not blob_name:
+                    raise UploadSessionError(
+                        "Azure endpoint/container/blob_name missing for finalize"
+                    )
+                from azure.identity import DefaultAzureCredential as _DACFinalize
+                from azure.storage.blob import BlobServiceClient as _BscFinalize
+                _bsc = _BscFinalize(
+                    account_url=endpoint, credential=_DACFinalize()
+                )
+                commit_client = _bsc.get_blob_client(container, blob_name)
+
+                # The browser staged blocks via the REST API with
+                # base64-encoded block IDs.  The Python SDK's
+                # commit_block_list internally base64-encodes every ID,
+                # so we must decode first to avoid double-encoding.
+                block_ids = [
+                    base64.b64decode(bid).decode("utf-8") for bid in block_ids
+                ]
+            else:
+                commit_client = BlobClient.from_blob_url(f"{blob_url}?{sas_token}")
+
+            commit_client.commit_block_list(block_ids)
             log.info(
                 "Azure upload finalized: session=%s, blocks=%d, blob=%s",
                 session_id, len(block_ids), blob_url,

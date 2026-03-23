@@ -170,8 +170,10 @@ class UploadSessionStore:
         manifest = self.get_session(session_id, user_id=user_id)
         if manifest.get("state") != "uploading":
             raise UploadSessionError("Upload session is not accepting chunks")
-        if manifest.get("upload_mode") != "azure_server_staged":
-            raise UploadSessionError("Session is not in azure_server_staged mode")
+        if manifest.get("upload_mode") not in ("azure_server_staged", "azure_sas"):
+            raise UploadSessionError(
+                "Session is not in azure_server_staged or azure_sas mode"
+            )
 
         total_chunks = int(manifest.get("total_chunks") or 0)
         if chunk_index < 0 or chunk_index >= total_chunks:
