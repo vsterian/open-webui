@@ -86,11 +86,21 @@ def _create_test_app(config_overrides: dict = None) -> FastAPI:
         "VIDEO_INDEXER_CLIENT_SECRET": "secret-444",
         "VIDEO_INDEXER_INDEXING_PRESET": "Default",
         "VIDEO_INDEXER_LANGUAGE": "en-US",
+        "VIDEO_INDEXER_AZURE_BLOB_SAS": "",
+        "VIDEO_INDEXER_AZURE_BLOB_ENDPOINT": "",
+        "VIDEO_INDEXER_AZURE_BLOB_CONTAINER": "",
         "SONIOX_API_KEY": "",
         "SONIOX_BASE_URL": "https://api.soniox.com/v1",
         "SONIOX_MODEL": "stt-async-v4",
         "SONIOX_ENABLE_LANGUAGE_IDENTIFICATION": True,
         "SONIOX_LANGUAGE_HINTS": [],
+        "SONIOX_ENABLE_SPEAKER_DIARIZATION": True,
+        "SONIOX_ENABLE_TRANSLATION": False,
+        "SONIOX_TRANSLATION_MODE": "two_way",
+        "SONIOX_TRANSLATION_TARGET_LANGUAGE": "en",
+        "SONIOX_TRANSLATION_SECOND_LANGUAGE": "en",
+        "SONIOX_CONTEXT_TERMS": [],
+        "SONIOX_CONTEXT_TEXT": "",
     }
     if config_overrides:
         defaults.update(config_overrides)
@@ -126,6 +136,8 @@ class TestConfigEndpoints:
         assert data["LOCATION"] == "eastus"
         assert data["INDEXING_PRESET"] == "Default"
         assert data["LANGUAGE"] == "en-US"
+        assert data["VIDEO_INDEXER_AZURE_BLOB_ENDPOINT"] == ""
+        assert data["VIDEO_INDEXER_AZURE_BLOB_CONTAINER"] == ""
         assert data["SONIOX_MODEL"] == "stt-async-v4"
 
     def test_update_config(self):
@@ -142,6 +154,9 @@ class TestConfigEndpoints:
             "CLIENT_SECRET": "new-secret",
             "INDEXING_PRESET": "AudioOnly",
             "LANGUAGE": "es-ES",
+            "VIDEO_INDEXER_AZURE_BLOB_SAS": "sv=2023-11-03&sig=test",
+            "VIDEO_INDEXER_AZURE_BLOB_ENDPOINT": "https://example.blob.core.windows.net",
+            "VIDEO_INDEXER_AZURE_BLOB_CONTAINER": "video-uploads",
             "SONIOX_API_KEY": "soniox-key",
             "SONIOX_BASE_URL": "https://api.eu.soniox.com/v1",
             "SONIOX_MODEL": "stt-async-v4",
@@ -156,12 +171,16 @@ class TestConfigEndpoints:
         assert data["ACCOUNT_NAME"] == "new-acct"
         assert data["LOCATION"] == "westus2"
         assert data["INDEXING_PRESET"] == "AudioOnly"
+        assert data["VIDEO_INDEXER_AZURE_BLOB_ENDPOINT"] == "https://example.blob.core.windows.net"
+        assert data["VIDEO_INDEXER_AZURE_BLOB_CONTAINER"] == "video-uploads"
         assert data["SONIOX_BASE_URL"] == "https://api.eu.soniox.com/v1"
 
         # Verify state was actually mutated
         assert self.app.state.config.VIDEO_INDEXER_ENABLED is True
         assert self.app.state.config.VIDEO_INDEXER_PROVIDER == "soniox"
         assert self.app.state.config.VIDEO_INDEXER_LOCATION == "westus2"
+        assert self.app.state.config.VIDEO_INDEXER_AZURE_BLOB_ENDPOINT == "https://example.blob.core.windows.net"
+        assert self.app.state.config.VIDEO_INDEXER_AZURE_BLOB_CONTAINER == "video-uploads"
 
     def test_update_config_partial_defaults(self):
         """Unset fields in the form use defaults."""

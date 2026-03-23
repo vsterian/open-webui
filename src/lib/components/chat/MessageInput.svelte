@@ -705,7 +705,7 @@
 			return;
 		}
 
-		inputFiles.forEach(async (file) => {
+		for (const file of inputFiles) {
 			console.log('Processing file:', {
 				name: file.name,
 				type: file.type,
@@ -732,7 +732,7 @@
 			if (file['type'].startsWith('image/')) {
 				if (visionCapableModels.length === 0) {
 					toast.error($i18n.t('Selected model(s) do not support image inputs'));
-					return;
+					continue;
 				}
 
 				const compressImageHandler = async (imageUrl, settings = {}, config = {}) => {
@@ -771,35 +771,45 @@
 					return imageUrl;
 				};
 
-				let reader = new FileReader();
+				await new Promise<void>(async (resolve) => {
+					let reader = new FileReader();
 
-				reader.onload = async (event) => {
-					let imageUrl = event.target.result;
+					reader.onload = async (event) => {
+						let imageUrl = event.target.result;
 
-					// Compress the image if settings or config require it
-					imageUrl = await compressImageHandler(imageUrl, $settings, $config);
+						// Compress the image if settings or config require it
+						imageUrl = await compressImageHandler(imageUrl, $settings, $config);
 
-					if ($temporaryChatEnabled) {
-						files = [
-							...files,
-							{
-								type: 'image',
-								url: imageUrl
-							}
-						];
-					} else {
-						const blob = await (await fetch(imageUrl)).blob();
-						const compressedFile = new File([blob], file.name, { type: file.type });
+						if ($temporaryChatEnabled) {
+							files = [
+								...files,
+								{
+									type: 'image',
+									url: imageUrl
+								}
+							];
+						} else {
+							const blob = await (await fetch(imageUrl)).blob();
+							const compressedFile = new File([blob], file.name, { type: file.type });
 
-						uploadFileHandler(compressedFile, false);
-					}
-				};
+							await uploadFileHandler(compressedFile, false);
+						}
 
-				reader.readAsDataURL(file['type'] === 'image/heic' ? await convertHeicToJpeg(file) : file);
+						resolve();
+					};
+
+					reader.onerror = () => {
+						resolve();
+					};
+
+					const imageSource =
+						file['type'] === 'image/heic' ? await convertHeicToJpeg(file) : file;
+					reader.readAsDataURL(imageSource);
+				});
 			} else {
-				uploadFileHandler(file);
+				await uploadFileHandler(file);
 			}
-		});
+		}
 	};
 
 	const createNote = async () => {
@@ -1148,7 +1158,7 @@
 						on:change={async () => {
 							if (inputFiles && inputFiles.length > 0) {
 								const _inputFiles = Array.from(inputFiles);
-								inputFilesHandler(_inputFiles);
+								await inputFilesHandler(_inputFiles);
 							} else {
 								toast.error($i18n.t(`File not found.`));
 							}

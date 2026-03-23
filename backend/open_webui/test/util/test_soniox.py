@@ -12,6 +12,7 @@ from open_webui.utils.soniox import (
     SonioxClient,
     SonioxError,
     build_soniox_client_from_config,
+    compute_ffmpeg_timeout_seconds,
     normalize_audio_file_for_soniox,
 )
 
@@ -36,8 +37,8 @@ def _make_client(**overrides) -> SonioxClient:
 
 
 class TestSonioxClient:
-    @patch("open_webui.utils.soniox.requests.get")
-    def test_verify_connection_success(self, mock_get):
+    @patch("open_webui.utils.soniox.requests.request")
+    def test_verify_connection_success(self, mock_request):
         client = _make_client()
         resp = MagicMock()
         resp.status_code = 200
@@ -47,43 +48,43 @@ class TestSonioxClient:
                 {"name": "stt-rt-v4"},
             ]
         }
-        mock_get.return_value = resp
+        mock_request.return_value = resp
 
         data = client.verify_connection()
         assert data["status"] == "ok"
         assert "stt-async-v4" in data["available_models"]
 
-    @patch("open_webui.utils.soniox.requests.post")
+    @patch("open_webui.utils.soniox.requests.request")
     @patch("open_webui.utils.soniox.Path.exists")
-    def test_upload_file_success(self, mock_exists, mock_post):
+    def test_upload_file_success(self, mock_exists, mock_request):
         client = _make_client()
         mock_exists.return_value = True
 
         resp = MagicMock()
         resp.status_code = 201
         resp.json.return_value = {"id": "file-123"}
-        mock_post.return_value = resp
+        mock_request.return_value = resp
 
         with patch("builtins.open", mock_open(read_data=b"fake")):
             file_id = client.upload_file("/tmp/a.mp3", "a.mp3")
 
         assert file_id == "file-123"
 
-    @patch("open_webui.utils.soniox.requests.post")
-    def test_create_transcription_failure(self, mock_post):
+    @patch("open_webui.utils.soniox.requests.request")
+    def test_create_transcription_failure(self, mock_request):
         client = _make_client()
 
         resp = MagicMock()
         resp.status_code = 400
         resp.text = "bad request"
         resp.json.return_value = {"error": "bad request"}
-        mock_post.return_value = resp
+        mock_request.return_value = resp
 
         with pytest.raises(SonioxError, match="Failed to create Soniox transcription"):
             client.create_transcription(file_id="file-123")
 
-    @patch("open_webui.utils.soniox.requests.get")
-    def test_wait_for_completion_success(self, mock_get):
+    @patch("open_webui.utils.soniox.requests.request")
+    def test_wait_for_completion_success(self, mock_request):
         client = _make_client()
 
         processing = MagicMock()
@@ -94,7 +95,7 @@ class TestSonioxClient:
         completed.status_code = 200
         completed.json.return_value = {"id": "tr-1", "status": "completed", "progress": 100}
 
-        mock_get.side_effect = [processing, completed]
+        mock_request.side_effect = [processing, completed]
 
         progress_calls = []
 
@@ -166,22 +167,22 @@ class TestSonioxClient:
         assert "speakers" not in out
         assert "speaker_segments" not in out
 
-    @patch("open_webui.utils.soniox.requests.post")
-    def test_create_transcription_with_diarization(self, mock_post):
+    @patch("open_webui.utils.soniox.requests.request")
+    def test_create_transcription_with_diarization(self, mock_request):
         client = _make_client(enable_speaker_diarization=True)
 
         resp = MagicMock()
         resp.status_code = 201
         resp.json.return_value = {"id": "tr-123"}
-        mock_post.return_value = resp
+        mock_request.return_value = resp
 
         client.create_transcription(file_id="file-123")
 
-        call_body = mock_post.call_args.kwargs.get("json") or mock_post.call_args[1].get("json")
+        call_body = mock_request.call_args.kwargs.get("json") or mock_request.call_args[1].get("json")
         assert call_body["enable_speaker_diarization"] is True
 
-    @patch("open_webui.utils.soniox.requests.post")
-    def test_create_transcription_with_two_way_translation(self, mock_post):
+    @patch("open_webui.utils.soniox.requests.request")
+    def test_create_transcription_with_two_way_translation(self, mock_request):
         client = _make_client(
             enable_translation=True,
             translation_mode="two_way",
@@ -192,17 +193,17 @@ class TestSonioxClient:
         resp = MagicMock()
         resp.status_code = 201
         resp.json.return_value = {"id": "tr-123"}
-        mock_post.return_value = resp
+        mock_request.return_value = resp
 
         client.create_transcription(file_id="file-123")
 
-        call_body = mock_post.call_args.kwargs.get("json") or mock_post.call_args[1].get("json")
+        call_body = mock_request.call_args.kwargs.get("json") or mock_request.call_args[1].get("json")
         assert call_body["translation"]["type"] == "two_way"
         assert call_body["translation"]["language_a"] == "ro"
         assert call_body["translation"]["language_b"] == "en"
 
-    @patch("open_webui.utils.soniox.requests.post")
-    def test_create_transcription_with_context(self, mock_post):
+    @patch("open_webui.utils.soniox.requests.request")
+    def test_create_transcription_with_context(self, mock_request):
         client = _make_client(
             context_terms=["Bădeni", "OpenWebUI"],
             context_text="This is a meeting about architecture.",
@@ -211,11 +212,11 @@ class TestSonioxClient:
         resp = MagicMock()
         resp.status_code = 201
         resp.json.return_value = {"id": "tr-123"}
-        mock_post.return_value = resp
+        mock_request.return_value = resp
 
         client.create_transcription(file_id="file-123")
 
-        call_body = mock_post.call_args.kwargs.get("json") or mock_post.call_args[1].get("json")
+        call_body = mock_request.call_args.kwargs.get("json") or mock_request.call_args[1].get("json")
         assert call_body["context"]["terms"] == ["Bădeni", "OpenWebUI"]
         assert call_body["context"]["text"] == "This is a meeting about architecture."
 
@@ -235,6 +236,11 @@ class TestBuildClientFromConfig:
             SONIOX_TRANSLATION_SECOND_LANGUAGE="en",
             SONIOX_CONTEXT_TERMS=["test"],
             SONIOX_CONTEXT_TEXT="context",
+            SONIOX_UPLOAD_TIMEOUT_SECONDS=900,
+            SONIOX_REQUEST_TIMEOUT_SECONDS=45,
+            SONIOX_TRANSCRIPT_TIMEOUT_SECONDS=120,
+            SONIOX_RETRY_ATTEMPTS=5,
+            SONIOX_RETRY_BACKOFF_SECONDS=2.0,
         )
 
         client = build_soniox_client_from_config(config)
@@ -245,6 +251,11 @@ class TestBuildClientFromConfig:
         assert client.translation_mode == "two_way"
         assert client.context_terms == ["test"]
         assert client.context_text == "context"
+        assert client.upload_timeout_seconds == 900
+        assert client.request_timeout_seconds == 45
+        assert client.transcript_timeout_seconds == 120
+        assert client.retry_attempts == 5
+        assert client.retry_backoff_seconds == 2.0
 
     def test_build_with_defaults(self):
         config = SimpleNamespace(
@@ -257,6 +268,34 @@ class TestBuildClientFromConfig:
         assert client.translation_mode == "two_way"
         assert client.context_terms == []
         assert client.context_text == ""
+
+
+class TestFfmpegTimeoutPolicy:
+    @patch("open_webui.utils.soniox.os.path.getsize")
+    def test_compute_ffmpeg_timeout_seconds_scales_with_size(self, mock_getsize):
+        mock_getsize.return_value = 2 * 1024 * 1024 * 1024
+
+        timeout = compute_ffmpeg_timeout_seconds(
+            "/tmp/meeting.mov",
+            base_timeout_seconds=300,
+            timeout_per_mb_seconds=0.5,
+            max_timeout_seconds=7200,
+        )
+
+        assert timeout == 1324
+
+    @patch("open_webui.utils.soniox.os.path.getsize")
+    def test_compute_ffmpeg_timeout_seconds_uses_base_for_small_file(self, mock_getsize):
+        mock_getsize.return_value = 5 * 1024 * 1024
+
+        timeout = compute_ffmpeg_timeout_seconds(
+            "/tmp/sample.mov",
+            base_timeout_seconds=300,
+            timeout_per_mb_seconds=0.5,
+            max_timeout_seconds=7200,
+        )
+
+        assert timeout == 302
 
     def test_missing_api_key(self):
         config = SimpleNamespace(SONIOX_API_KEY="")

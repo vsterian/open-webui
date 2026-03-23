@@ -2,6 +2,8 @@ import logging
 import os
 import uuid
 import json
+import base64
+from types import SimpleNamespace
 from pathlib import Path
 from typing import Optional
 from urllib.parse import quote
@@ -47,9 +49,16 @@ from open_webui.routers.audio import transcribe
 from open_webui.storage.provider import Storage
 
 
-from open_webui.config import BYPASS_ADMIN_ACCESS_CONTROL
+from open_webui.config import (
+    BYPASS_ADMIN_ACCESS_CONTROL,
+    UPLOAD_DIR,
+    STORAGE_PROVIDER,
+    AZURE_STORAGE_ENDPOINT,
+    AZURE_STORAGE_CONTAINER_NAME,
+)
 from open_webui.utils.auth import get_admin_user, get_verified_user
 from open_webui.utils.misc import strict_match_mime_type
+from open_webui.utils.upload_sessions import UploadSessionError, UploadSessionStore
 from open_webui.utils.video_indexer import (
     VideoIndexerClient,
     VideoIndexerError,
@@ -58,9 +67,11 @@ from open_webui.utils.video_indexer import (
 from open_webui.utils.soniox import (
     SonioxError,
     build_soniox_client_from_config,
+    compute_ffmpeg_timeout_seconds,
     normalize_audio_file_for_soniox,
 )
 from pydantic import BaseModel
+from azure.storage.blob import BlobClient
 
 log = logging.getLogger(__name__)
 
@@ -196,6 +207,486 @@ def process_uploaded_file(
             _process_handler(db_session)
 
 
+def _get_upload_session_store(request: Request) -> UploadSessionStore:
+    ttl_seconds = int(
+        getattr(
+            request.app.state.config,
+            "RESUMABLE_UPLOAD_SESSION_TTL_SECONDS",
+            86400,
+        )
+        or 86400
+    )
+    sessions_dir = os.path.join(UPLOAD_DIR, "resumable-sessions")
+    return UploadSessionStore(base_dir=sessions_dir, ttl_seconds=ttl_seconds)
+
+
+class UploadSessionCreateForm(BaseModel):
+    filename: str
+    size: int
+    content_type: Optional[str] = None
+    process: bool = True
+    metadata: Optional[dict] = None
+    chunk_size: Optional[int] = None
+    allow_azure_sas: bool = True
+
+
+class UploadSessionFinalizeForm(BaseModel):
+    block_ids: Optional[list[str]] = None
+
+
+def _is_media_content_type(content_type: Optional[str]) -> bool:
+    if not isinstance(content_type, str):
+        return False
+    return content_type.startswith("video/") or content_type.startswith("audio/")
+
+
+def _normalize_sas_token(raw_value: str) -> str:
+    value = (raw_value or "").strip()
+    if not value:
+        return ""
+    if "?" in value:
+        value = value.split("?", 1)[1]
+    return value.strip(" ?&")
+
+
+def _build_azure_block_id(chunk_index: int) -> str:
+    raw = f"block-{chunk_index:08d}".encode("utf-8")
+    return base64.b64encode(raw).decode("utf-8")
+
+
+def _build_azure_upload_meta(request: Request, session_id: str, filename: str) -> Optional[dict]:
+    sas_token_raw = getattr(request.app.state.config, "VIDEO_INDEXER_AZURE_BLOB_SAS", "")
+    sas_token = _normalize_sas_token(sas_token_raw)
+    endpoint = str(
+        getattr(request.app.state.config, "VIDEO_INDEXER_AZURE_BLOB_ENDPOINT", "")
+        or AZURE_STORAGE_ENDPOINT
+        or ""
+    ).rstrip("/")
+    container = str(
+        getattr(request.app.state.config, "VIDEO_INDEXER_AZURE_BLOB_CONTAINER", "")
+        or AZURE_STORAGE_CONTAINER_NAME
+        or ""
+    ).strip("/")
+    if not sas_token or not endpoint or not container:
+        return None
+
+    blob_name = f"{session_id}_{os.path.basename(filename)}"
+    blob_url = f"{endpoint}/{container}/{quote(blob_name)}"
+    return {
+        "blob_name": blob_name,
+        "blob_url": blob_url,
+        "sas_token": sas_token,
+    }
+
+
+def _resolve_blob_to_local(request: Request, file_path: str, file_item) -> str:
+    """Download an Azure blob to local disk if file_path is a remote URL.
+
+    After azure_server_staged uploads the file record stores a blob URL
+    (https://...) as file_path.  Processing code (ffmpeg, Soniox upload)
+    requires a local file.  This helper transparently downloads the blob
+    using the Video Indexer SAS token and returns a local path.  If the
+    path is already local it is returned unchanged.
+    """
+    if not file_path or not file_path.startswith(("https://", "http://")):
+        return file_path
+
+    sas_raw = getattr(request.app.state.config, "VIDEO_INDEXER_AZURE_BLOB_SAS", "")
+    sas_token = _normalize_sas_token(sas_raw)
+    if not sas_token:
+        raise RuntimeError(
+            "Cannot download blob for processing: "
+            "VIDEO_INDEXER_AZURE_BLOB_SAS is not configured"
+        )
+
+    local_filename = f"{file_item.id}_{os.path.basename(file_item.filename or 'blob')}"
+    local_path = os.path.join(UPLOAD_DIR, local_filename)
+
+    if os.path.exists(local_path):
+        log.info("Blob already downloaded locally: %s", local_path)
+        return local_path
+
+    log.info("Downloading blob to local disk: %s -> %s", file_path, local_path)
+    blob_client = BlobClient.from_blob_url(f"{file_path}?{sas_token}")
+    tmp_path = local_path + ".tmp"
+    try:
+        with open(tmp_path, "wb") as f:
+            stream = blob_client.download_blob()
+            stream.readinto(f)
+        os.replace(tmp_path, local_path)
+    except Exception:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+        raise
+
+    log.info("Blob downloaded successfully: %s (%d bytes)", local_path, os.path.getsize(local_path))
+    return local_path
+
+
+def _create_uploaded_file_record(
+    *,
+    user,
+    filename: str,
+    file_path: str,
+    content_type: Optional[str],
+    size: int,
+    process: bool,
+    file_metadata: dict,
+    db: Session,
+):
+    file_id = str(uuid.uuid4())
+    file_item = Files.insert_new_file(
+        user.id,
+        FileForm(
+            **{
+                "id": file_id,
+                "filename": filename,
+                "path": file_path,
+                "data": {
+                    **({"status": "pending"} if process else {}),
+                },
+                "meta": {
+                    "name": filename,
+                    "content_type": content_type if isinstance(content_type, str) else None,
+                    "size": int(size),
+                    "data": file_metadata,
+                },
+            }
+        ),
+        db=db,
+    )
+
+    if "channel_id" in file_metadata:
+        channel = Channels.get_channel_by_id_and_user_id(
+            file_metadata["channel_id"], user.id, db=db
+        )
+        if channel:
+            Channels.add_file_to_channel_by_id(channel.id, file_item.id, user.id, db=db)
+
+    return file_item
+
+
+@router.post("/uploads/sessions")
+def create_upload_session(
+    request: Request,
+    form_data: UploadSessionCreateForm,
+    user=Depends(get_verified_user),
+):
+    if form_data.size <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=ERROR_MESSAGES.DEFAULT("Invalid upload size"),
+        )
+
+    default_chunk_size = int(
+        getattr(
+            request.app.state.config,
+            "RESUMABLE_UPLOAD_CHUNK_SIZE_BYTES",
+            8 * 1024 * 1024,
+        )
+        or (8 * 1024 * 1024)
+    )
+    chunk_size = int(form_data.chunk_size or default_chunk_size)
+
+    if chunk_size <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=ERROR_MESSAGES.DEFAULT("Invalid chunk size"),
+        )
+
+    if not form_data.filename or not os.path.basename(form_data.filename):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=ERROR_MESSAGES.DEFAULT("Invalid filename"),
+        )
+
+    store = _get_upload_session_store(request)
+    try:
+        session_id = str(uuid.uuid4())
+        upload_meta = None
+        upload_mode = "app_mediated"
+        if _is_media_content_type(form_data.content_type):
+            upload_meta = _build_azure_upload_meta(request, session_id, form_data.filename)
+            if upload_meta:
+                upload_mode = "azure_server_staged"
+                # Send the entire file as a single Azure Put Block call
+                # (Azure SDK v12 supports up to 4 GB per block).
+                # For files larger than 4 GB, fall back to multi-block with
+                # AZURE_UPLOAD_CHUNK_SIZE_BYTES.
+                max_single_block = 4 * 1024 * 1024 * 1024  # 4 GB
+                if form_data.size <= max_single_block:
+                    chunk_size = form_data.size
+                else:
+                    azure_chunk_size = int(
+                        getattr(
+                            request.app.state.config,
+                            "AZURE_UPLOAD_CHUNK_SIZE_BYTES",
+                            64 * 1024 * 1024,
+                        )
+                        or (64 * 1024 * 1024)
+                    )
+                    chunk_size = max(4 * 1024 * 1024, min(azure_chunk_size, max_single_block))
+
+        session = store.create_session(
+            user_id=user.id,
+            session_id=session_id,
+            filename=form_data.filename,
+            content_type=form_data.content_type,
+            total_size=form_data.size,
+            chunk_size=chunk_size,
+            process=form_data.process,
+            metadata=form_data.metadata or {},
+            upload_mode=upload_mode,
+            upload_meta=upload_meta,
+        )
+    except UploadSessionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=ERROR_MESSAGES.DEFAULT(str(exc)),
+        )
+
+    log.info(
+        "Upload session created: session_id=%s, mode=%s, chunks=%d, chunk_size=%d, total=%d",
+        session["session_id"],
+        session.get("upload_mode", "app_mediated"),
+        session["total_chunks"],
+        session["chunk_size"],
+        session.get("total_size", 0),
+    )
+
+    response = {
+        "session_id": session["session_id"],
+        "filename": session["filename"],
+        "chunk_size": session["chunk_size"],
+        "total_chunks": session["total_chunks"],
+        "uploaded_bytes": session["uploaded_bytes"],
+        "state": session["state"],
+        "upload_mode": session.get("upload_mode", "app_mediated"),
+    }
+
+    if session.get("upload_mode") == "azure_sas":
+        response["azure_blob_url"] = session.get("upload_meta", {}).get("blob_url", "")
+        response["azure_blob_sas_token"] = session.get("upload_meta", {}).get(
+            "sas_token", ""
+        )
+
+    return response
+
+
+@router.get("/uploads/sessions/{session_id}")
+def get_upload_session(
+    request: Request,
+    session_id: str,
+    user=Depends(get_verified_user),
+):
+    store = _get_upload_session_store(request)
+    try:
+        session = store.get_session(session_id, user_id=user.id)
+    except UploadSessionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=ERROR_MESSAGES.DEFAULT(str(exc)),
+        )
+
+    return {
+        "session_id": session["session_id"],
+        "filename": session["filename"],
+        "chunk_size": session["chunk_size"],
+        "total_chunks": session["total_chunks"],
+        "uploaded_chunks": len(session.get("uploaded_chunks", {})),
+        "uploaded_bytes": session.get("uploaded_bytes", 0),
+        "state": session.get("state", "uploading"),
+    }
+
+
+@router.put("/uploads/sessions/{session_id}/chunks/{chunk_index}")
+async def upload_session_chunk(
+    request: Request,
+    session_id: str,
+    chunk_index: int,
+    user=Depends(get_verified_user),
+):
+    body = await request.body()
+    store = _get_upload_session_store(request)
+
+    try:
+        session = store.get_session(session_id, user_id=user.id)
+
+        if session.get("upload_mode") == "azure_server_staged":
+            upload_meta = session.get("upload_meta", {})
+            blob_url = upload_meta.get("blob_url", "")
+            sas_token = upload_meta.get("sas_token", "")
+            if not blob_url or not sas_token:
+                raise UploadSessionError("Azure server-staged metadata is missing")
+
+            block_id = _build_azure_block_id(chunk_index)
+            blob_client = BlobClient.from_blob_url(f"{blob_url}?{sas_token}")
+
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(
+                None, blob_client.stage_block, block_id, body
+            )
+
+            session = store.add_staged_block(
+                session_id,
+                user_id=user.id,
+                chunk_index=chunk_index,
+                block_id=block_id,
+                chunk_size=len(body),
+            )
+            log.debug(
+                "Azure staged block %d/%d (%d bytes) for session=%s",
+                chunk_index + 1,
+                session.get("total_chunks", 0),
+                len(body),
+                session_id,
+            )
+        else:
+            session = store.add_chunk(
+                session_id,
+                user_id=user.id,
+                chunk_index=chunk_index,
+                chunk_bytes=body,
+            )
+    except UploadSessionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=ERROR_MESSAGES.DEFAULT(str(exc)),
+        )
+
+    return {
+        "session_id": session["session_id"],
+        "uploaded_chunks": len(session.get("uploaded_chunks", {})),
+        "uploaded_bytes": session.get("uploaded_bytes", 0),
+        "total_chunks": session.get("total_chunks", 0),
+        "state": session.get("state", "uploading"),
+    }
+
+
+@router.post("/uploads/sessions/{session_id}/finalize", response_model=FileModelResponse)
+def finalize_upload_session(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    session_id: str,
+    form_data: Optional[UploadSessionFinalizeForm] = None,
+    process_in_background: bool = Query(True),
+    user=Depends(get_verified_user),
+    db: Session = Depends(get_session),
+):
+    store = _get_upload_session_store(request)
+    assembled_path = os.path.join(UPLOAD_DIR, f"assembled-{session_id}.bin")
+
+    try:
+        session = store.get_session(session_id, user_id=user.id)
+        if session.get("upload_mode") in ("azure_sas", "azure_server_staged"):
+            upload_meta = session.get("upload_meta", {})
+            blob_url = upload_meta.get("blob_url", "")
+            sas_token = upload_meta.get("sas_token", "")
+            if not blob_url or not sas_token:
+                raise UploadSessionError("Azure upload metadata is missing")
+
+            if session.get("upload_mode") == "azure_server_staged":
+                staged_blocks = session.get("staged_blocks", {})
+                total_chunks = int(session.get("total_chunks") or 0)
+                if len(staged_blocks) != total_chunks:
+                    raise UploadSessionError(
+                        f"Upload incomplete: {len(staged_blocks)}/{total_chunks} blocks staged"
+                    )
+                block_ids = [
+                    staged_blocks[str(i)]
+                    for i in range(total_chunks)
+                ]
+            elif form_data and form_data.block_ids:
+                block_ids = form_data.block_ids
+            else:
+                block_ids = [
+                    _build_azure_block_id(index)
+                    for index in range(int(session.get("total_chunks") or 0))
+                ]
+
+            if not block_ids:
+                raise UploadSessionError("No Azure block ids available for finalize")
+
+            blob_client = BlobClient.from_blob_url(f"{blob_url}?{sas_token}")
+            blob_client.commit_block_list(block_ids)
+            log.info(
+                "Azure upload finalized: session=%s, blocks=%d, blob=%s",
+                session_id, len(block_ids), blob_url,
+            )
+
+            file_item = _create_uploaded_file_record(
+                user=user,
+                filename=session["filename"],
+                file_path=blob_url,
+                content_type=session.get("content_type"),
+                size=int(session.get("total_size") or 0),
+                process=bool(session.get("process", True)),
+                file_metadata=session.get("metadata") or {},
+                db=db,
+            )
+
+            if bool(session.get("process", True)):
+                pseudo_upload = SimpleNamespace(content_type=session.get("content_type"))
+                if background_tasks and process_in_background:
+                    background_tasks.add_task(
+                        process_uploaded_file,
+                        request,
+                        pseudo_upload,
+                        blob_url,
+                        file_item,
+                        session.get("metadata") or {},
+                        user,
+                    )
+                else:
+                    process_uploaded_file(
+                        request,
+                        pseudo_upload,
+                        blob_url,
+                        file_item,
+                        session.get("metadata") or {},
+                        user,
+                        db=db,
+                    )
+
+            return {"status": True, **file_item.model_dump()}
+
+        store.assemble(
+            session_id,
+            user_id=user.id,
+            output_path=assembled_path,
+        )
+
+        with open(assembled_path, "rb") as assembled_file:
+            pseudo_upload = SimpleNamespace(
+                filename=session["filename"],
+                content_type=session.get("content_type"),
+                file=assembled_file,
+            )
+            result = upload_file_handler(
+                request,
+                file=pseudo_upload,
+                metadata=session.get("metadata") or {},
+                process=bool(session.get("process", True)),
+                process_in_background=process_in_background,
+                user=user,
+                background_tasks=background_tasks,
+                db=db,
+            )
+        return result
+    except UploadSessionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=ERROR_MESSAGES.DEFAULT(str(exc)),
+        )
+    finally:
+        try:
+            if os.path.exists(assembled_path):
+                os.remove(assembled_path)
+        except OSError:
+            log.warning("Failed to remove assembled upload file: %s", assembled_path)
+        store.cleanup(session_id)
+
+
 def _process_video_with_indexer(
     request, file_item, file_path, file_metadata, user, db_session, media_type="video"
 ):
@@ -206,6 +697,7 @@ def _process_video_with_indexer(
     """
     try:
         client = build_client_from_config(request.app.state.config)
+        file_path = _resolve_blob_to_local(request, file_path, file_item)
         resolved_path = Storage.get_file(file_path)
 
         language = (
@@ -414,8 +906,11 @@ def _process_video_with_indexer(
 def _process_media_with_soniox(
     request, file_item, file_path, file_metadata, user, db_session
 ):
+    normalized_path = None
+    resolved_path = None
     try:
         client = build_soniox_client_from_config(request.app.state.config)
+        file_path = _resolve_blob_to_local(request, file_path, file_item)
         resolved_path = Storage.get_file(file_path)
         content_type = (
             (file_item.meta or {}).get("content_type")
@@ -449,15 +944,45 @@ def _process_media_with_soniox(
                 db=db_session,
             )
 
+        ffmpeg_timeout_seconds = compute_ffmpeg_timeout_seconds(
+            resolved_path,
+            base_timeout_seconds=int(
+                getattr(
+                    request.app.state.config,
+                    "SONIOX_VIDEO_FFMPEG_BASE_TIMEOUT_SECONDS",
+                    300,
+                )
+                or 300
+            ),
+            timeout_per_mb_seconds=float(
+                getattr(
+                    request.app.state.config,
+                    "SONIOX_VIDEO_FFMPEG_TIMEOUT_PER_MB_SECONDS",
+                    0.5,
+                )
+                or 0.5
+            ),
+            max_timeout_seconds=int(
+                getattr(
+                    request.app.state.config,
+                    "SONIOX_VIDEO_FFMPEG_MAX_TIMEOUT_SECONDS",
+                    7200,
+                )
+                or 7200
+            ),
+        )
+
         try:
             normalized_path, normalized_filename = normalize_audio_file_for_soniox(
                 resolved_path,
                 filename=file_item.filename,
                 content_type=content_type,
+                ffmpeg_timeout_seconds=ffmpeg_timeout_seconds,
             )
             if is_video_input:
                 preprocessing["state"] = "completed"
                 preprocessing["extracted_file"] = normalized_filename
+                preprocessing["ffmpeg_timeout_seconds"] = ffmpeg_timeout_seconds
         except SonioxError as exc:
             if not is_video_input:
                 raise
@@ -589,6 +1114,15 @@ def _process_media_with_soniox(
         meta["analyzer"] = analyzer
         Files.update_file_metadata_by_id(file_item.id, meta, db=db_session)
         raise Exception(f"Soniox processing failed: {exc}")
+    finally:
+        if normalized_path and resolved_path and normalized_path != resolved_path:
+            try:
+                os.remove(normalized_path)
+            except OSError:
+                log.warning(
+                    "Failed to delete temporary Soniox normalized file: %s",
+                    normalized_path,
+                )
 
 
 def _process_media_with_analyzer(
@@ -972,7 +1506,13 @@ async def get_file_process_status(
                 media_type="text/event-stream",
             )
         else:
-            return {"status": file.data.get("status", "pending")}
+            data = file.data or {}
+            response = {"status": data.get("status", "pending")}
+            if data.get("progress"):
+                response["progress"] = data.get("progress")
+            if data.get("error"):
+                response["error"] = data.get("error")
+            return response
     else:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

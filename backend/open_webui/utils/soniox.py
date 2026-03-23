@@ -21,6 +21,12 @@ log = logging.getLogger(__name__)
 
 DEFAULT_BASE_URL = "https://api.soniox.com/v1"
 DEFAULT_MODEL = "stt-async-v4"
+DEFAULT_FFMPEG_TIMEOUT_SECONDS = 300
+DEFAULT_UPLOAD_TIMEOUT_SECONDS = 300
+DEFAULT_REQUEST_TIMEOUT_SECONDS = 30
+DEFAULT_TRANSCRIPT_TIMEOUT_SECONDS = 60
+DEFAULT_RETRY_ATTEMPTS = 3
+DEFAULT_RETRY_BACKOFF_SECONDS = 1.5
 
 
 class SonioxError(Exception):
@@ -48,6 +54,7 @@ def _is_video_input(suffix: str, content_type: str) -> bool:
 def _extract_audio_from_video_for_soniox(
     file_path: str,
     upload_name: str,
+    timeout_seconds: int = DEFAULT_FFMPEG_TIMEOUT_SECONDS,
 ) -> tuple[str, str]:
     extracted_path = os.path.splitext(file_path)[0] + ".soniox.mp3"
     command = [
@@ -73,7 +80,7 @@ def _extract_audio_from_video_for_soniox(
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            timeout=300,
+            timeout=timeout_seconds,
             check=False,
         )
     except Exception as exc:
@@ -97,10 +104,28 @@ def _extract_audio_from_video_for_soniox(
     return extracted_path, extracted_name
 
 
+def compute_ffmpeg_timeout_seconds(
+    file_path: str,
+    *,
+    base_timeout_seconds: int,
+    timeout_per_mb_seconds: float,
+    max_timeout_seconds: int,
+) -> int:
+    try:
+        file_size = os.path.getsize(file_path)
+    except OSError:
+        return base_timeout_seconds
+
+    size_mb = file_size / (1024 * 1024)
+    computed = int(base_timeout_seconds + (size_mb * timeout_per_mb_seconds))
+    return max(base_timeout_seconds, min(computed, max_timeout_seconds))
+
+
 def normalize_audio_file_for_soniox(
     file_path: str,
     filename: Optional[str] = None,
     content_type: Optional[str] = None,
+    ffmpeg_timeout_seconds: int = DEFAULT_FFMPEG_TIMEOUT_SECONDS,
 ) -> tuple[str, str]:
     """
     Normalize audio files that Soniox may reject (for example webm/opus)
@@ -117,7 +142,11 @@ def normalize_audio_file_for_soniox(
     ctype = (content_type or "").lower()
 
     if _is_video_input(suffix, ctype):
-        return _extract_audio_from_video_for_soniox(file_path, upload_name)
+        return _extract_audio_from_video_for_soniox(
+            file_path,
+            upload_name,
+            timeout_seconds=ffmpeg_timeout_seconds,
+        )
 
     needs_conversion = suffix in {".webm", ".ogg", ".oga", ".opus"} or any(
         marker in ctype for marker in ["webm", "ogg", "opus"]
@@ -162,6 +191,11 @@ class SonioxClient:
         translation_second_language: str = "en",
         context_terms: Optional[list[str]] = None,
         context_text: str = "",
+        upload_timeout_seconds: int = DEFAULT_UPLOAD_TIMEOUT_SECONDS,
+        request_timeout_seconds: int = DEFAULT_REQUEST_TIMEOUT_SECONDS,
+        transcript_timeout_seconds: int = DEFAULT_TRANSCRIPT_TIMEOUT_SECONDS,
+        retry_attempts: int = DEFAULT_RETRY_ATTEMPTS,
+        retry_backoff_seconds: float = DEFAULT_RETRY_BACKOFF_SECONDS,
     ):
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
@@ -175,6 +209,11 @@ class SonioxClient:
         self.translation_second_language = translation_second_language
         self.context_terms = context_terms or []
         self.context_text = context_text or ""
+        self.upload_timeout_seconds = upload_timeout_seconds
+        self.request_timeout_seconds = request_timeout_seconds
+        self.transcript_timeout_seconds = transcript_timeout_seconds
+        self.retry_attempts = max(1, int(retry_attempts))
+        self.retry_backoff_seconds = max(0.1, float(retry_backoff_seconds))
 
     @property
     def _headers(self) -> dict[str, str]:
@@ -194,11 +233,59 @@ class SonioxClient:
             pass
         return response.text
 
+    def _request_with_retry(self, method: str, url: str, **kwargs) -> requests.Response:
+        response: Optional[requests.Response] = None
+
+        for attempt in range(1, self.retry_attempts + 1):
+            try:
+                response = requests.request(method, url, **kwargs)
+            except requests.RequestException as exc:
+                if attempt >= self.retry_attempts:
+                    raise SonioxError(
+                        f"Soniox request failed after {attempt} attempts: {exc}"
+                    ) from exc
+
+                sleep_seconds = self.retry_backoff_seconds * attempt
+                log.warning(
+                    "Transient Soniox request error on attempt %s/%s for %s %s: %s",
+                    attempt,
+                    self.retry_attempts,
+                    method,
+                    url,
+                    exc,
+                )
+                time.sleep(sleep_seconds)
+                continue
+
+            status_code = response.status_code
+            if status_code in (408, 429, 500, 502, 503, 504):
+                if attempt >= self.retry_attempts:
+                    return response
+
+                sleep_seconds = self.retry_backoff_seconds * attempt
+                log.warning(
+                    "Retryable Soniox HTTP status on attempt %s/%s for %s %s: %s",
+                    attempt,
+                    self.retry_attempts,
+                    method,
+                    url,
+                    status_code,
+                )
+                time.sleep(sleep_seconds)
+                continue
+
+            return response
+
+        if response is None:
+            raise SonioxError(f"Soniox request failed for {method} {url}")
+        return response
+
     def verify_connection(self) -> dict[str, Any]:
-        resp = requests.get(
+        resp = self._request_with_retry(
+            "GET",
             f"{self.base_url}/models",
             headers=self._headers,
-            timeout=30,
+            timeout=self.request_timeout_seconds,
         )
         if resp.status_code != 200:
             raise SonioxError(
@@ -220,11 +307,12 @@ class SonioxClient:
 
         upload_name = filename or resolved.name
         with open(resolved, "rb") as f:
-            resp = requests.post(
+            resp = self._request_with_retry(
+                "POST",
                 f"{self.base_url}/files",
                 headers=self._headers,
                 files={"file": (upload_name, f)},
-                timeout=300,
+                timeout=self.upload_timeout_seconds,
             )
 
         if resp.status_code not in (200, 201):
@@ -281,11 +369,12 @@ class SonioxClient:
         if client_reference_id:
             body["client_reference_id"] = client_reference_id
 
-        resp = requests.post(
+        resp = self._request_with_retry(
+            "POST",
             f"{self.base_url}/transcriptions",
             headers={**self._headers, "Content-Type": "application/json"},
             json=body,
-            timeout=30,
+            timeout=self.request_timeout_seconds,
         )
 
         if resp.status_code not in (200, 201):
@@ -301,10 +390,11 @@ class SonioxClient:
         return transcription_id
 
     def get_transcription(self, transcription_id: str) -> dict[str, Any]:
-        resp = requests.get(
+        resp = self._request_with_retry(
+            "GET",
             f"{self.base_url}/transcriptions/{transcription_id}",
             headers=self._headers,
-            timeout=30,
+            timeout=self.request_timeout_seconds,
         )
 
         if resp.status_code != 200:
@@ -351,10 +441,11 @@ class SonioxClient:
             time.sleep(poll_interval)
 
     def get_transcript(self, transcription_id: str) -> dict[str, Any]:
-        resp = requests.get(
+        resp = self._request_with_retry(
+            "GET",
             f"{self.base_url}/transcriptions/{transcription_id}/transcript",
             headers=self._headers,
-            timeout=60,
+            timeout=self.transcript_timeout_seconds,
         )
 
         if resp.status_code != 200:
@@ -538,6 +629,30 @@ def build_soniox_client_from_config(config) -> SonioxClient:
             item.strip() for item in context_terms.split(",") if item.strip()
         ]
     context_text = getattr(config, "SONIOX_CONTEXT_TEXT", "") or ""
+    upload_timeout_seconds = int(
+        getattr(config, "SONIOX_UPLOAD_TIMEOUT_SECONDS", DEFAULT_UPLOAD_TIMEOUT_SECONDS)
+        or DEFAULT_UPLOAD_TIMEOUT_SECONDS
+    )
+    request_timeout_seconds = int(
+        getattr(config, "SONIOX_REQUEST_TIMEOUT_SECONDS", DEFAULT_REQUEST_TIMEOUT_SECONDS)
+        or DEFAULT_REQUEST_TIMEOUT_SECONDS
+    )
+    transcript_timeout_seconds = int(
+        getattr(
+            config,
+            "SONIOX_TRANSCRIPT_TIMEOUT_SECONDS",
+            DEFAULT_TRANSCRIPT_TIMEOUT_SECONDS,
+        )
+        or DEFAULT_TRANSCRIPT_TIMEOUT_SECONDS
+    )
+    retry_attempts = int(
+        getattr(config, "SONIOX_RETRY_ATTEMPTS", DEFAULT_RETRY_ATTEMPTS)
+        or DEFAULT_RETRY_ATTEMPTS
+    )
+    retry_backoff_seconds = float(
+        getattr(config, "SONIOX_RETRY_BACKOFF_SECONDS", DEFAULT_RETRY_BACKOFF_SECONDS)
+        or DEFAULT_RETRY_BACKOFF_SECONDS
+    )
 
     return SonioxClient(
         api_key=api_key,
@@ -552,4 +667,9 @@ def build_soniox_client_from_config(config) -> SonioxClient:
         translation_second_language=translation_second_language,
         context_terms=context_terms,
         context_text=context_text,
+        upload_timeout_seconds=upload_timeout_seconds,
+        request_timeout_seconds=request_timeout_seconds,
+        transcript_timeout_seconds=transcript_timeout_seconds,
+        retry_attempts=retry_attempts,
+        retry_backoff_seconds=retry_backoff_seconds,
     )

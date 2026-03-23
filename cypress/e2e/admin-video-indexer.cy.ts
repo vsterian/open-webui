@@ -59,6 +59,11 @@ describe('Admin Settings - Video Indexer', () => {
 			cy.contains('Language').should('be.visible');
 		});
 
+		it('shows Azure direct upload target fields', () => {
+			cy.contains('Azure Blob Endpoint (Optional)').should('be.visible');
+			cy.contains('Azure Blob Container (Optional)').should('be.visible');
+		});
+
 		it('shows Soniox settings fields', () => {
 			cy.contains('Soniox Settings').should('be.visible');
 			cy.contains('Soniox API Key').should('be.visible');
@@ -72,6 +77,14 @@ describe('Admin Settings - Video Indexer', () => {
 				.first()
 				.clear()
 				.type('test-subscription-id');
+
+			cy.get('input[placeholder="https://<account>.blob.core.windows.net"]')
+				.clear()
+				.type('https://example.blob.core.windows.net');
+
+			cy.get('input[placeholder="video-uploads"]')
+				.clear()
+				.type('video-uploads');
 
 			// Hit save
 			cy.get('button').contains('Save').click();

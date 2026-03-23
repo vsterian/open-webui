@@ -38,6 +38,9 @@ class VideoIndexerConfigForm(BaseModel):
     CLIENT_SECRET: str = ""
     INDEXING_PRESET: str = "Default"
     LANGUAGE: str = "en-US"
+    VIDEO_INDEXER_AZURE_BLOB_SAS: str = ""
+    VIDEO_INDEXER_AZURE_BLOB_ENDPOINT: str = ""
+    VIDEO_INDEXER_AZURE_BLOB_CONTAINER: str = ""
     SONIOX_API_KEY: str = ""
     SONIOX_BASE_URL: str = "https://api.soniox.com/v1"
     SONIOX_MODEL: str = "stt-async-v4"
@@ -72,6 +75,9 @@ async def get_video_indexer_config(request: Request, user=Depends(get_admin_user
         "CLIENT_SECRET": request.app.state.config.VIDEO_INDEXER_CLIENT_SECRET,
         "INDEXING_PRESET": request.app.state.config.VIDEO_INDEXER_INDEXING_PRESET,
         "LANGUAGE": request.app.state.config.VIDEO_INDEXER_LANGUAGE,
+        "VIDEO_INDEXER_AZURE_BLOB_SAS": request.app.state.config.VIDEO_INDEXER_AZURE_BLOB_SAS,
+        "VIDEO_INDEXER_AZURE_BLOB_ENDPOINT": request.app.state.config.VIDEO_INDEXER_AZURE_BLOB_ENDPOINT,
+        "VIDEO_INDEXER_AZURE_BLOB_CONTAINER": request.app.state.config.VIDEO_INDEXER_AZURE_BLOB_CONTAINER,
         "SONIOX_API_KEY": request.app.state.config.SONIOX_API_KEY,
         "SONIOX_BASE_URL": request.app.state.config.SONIOX_BASE_URL,
         "SONIOX_MODEL": request.app.state.config.SONIOX_MODEL,
@@ -105,6 +111,15 @@ async def update_video_indexer_config(
     request.app.state.config.VIDEO_INDEXER_CLIENT_SECRET = form_data.CLIENT_SECRET
     request.app.state.config.VIDEO_INDEXER_INDEXING_PRESET = form_data.INDEXING_PRESET
     request.app.state.config.VIDEO_INDEXER_LANGUAGE = form_data.LANGUAGE
+    request.app.state.config.VIDEO_INDEXER_AZURE_BLOB_SAS = (
+        form_data.VIDEO_INDEXER_AZURE_BLOB_SAS
+    )
+    request.app.state.config.VIDEO_INDEXER_AZURE_BLOB_ENDPOINT = (
+        form_data.VIDEO_INDEXER_AZURE_BLOB_ENDPOINT
+    )
+    request.app.state.config.VIDEO_INDEXER_AZURE_BLOB_CONTAINER = (
+        form_data.VIDEO_INDEXER_AZURE_BLOB_CONTAINER
+    )
     request.app.state.config.SONIOX_API_KEY = form_data.SONIOX_API_KEY
     request.app.state.config.SONIOX_BASE_URL = form_data.SONIOX_BASE_URL
     request.app.state.config.SONIOX_MODEL = form_data.SONIOX_MODEL
@@ -141,6 +156,9 @@ async def update_video_indexer_config(
         "CLIENT_SECRET": request.app.state.config.VIDEO_INDEXER_CLIENT_SECRET,
         "INDEXING_PRESET": request.app.state.config.VIDEO_INDEXER_INDEXING_PRESET,
         "LANGUAGE": request.app.state.config.VIDEO_INDEXER_LANGUAGE,
+        "VIDEO_INDEXER_AZURE_BLOB_SAS": request.app.state.config.VIDEO_INDEXER_AZURE_BLOB_SAS,
+        "VIDEO_INDEXER_AZURE_BLOB_ENDPOINT": request.app.state.config.VIDEO_INDEXER_AZURE_BLOB_ENDPOINT,
+        "VIDEO_INDEXER_AZURE_BLOB_CONTAINER": request.app.state.config.VIDEO_INDEXER_AZURE_BLOB_CONTAINER,
         "SONIOX_API_KEY": request.app.state.config.SONIOX_API_KEY,
         "SONIOX_BASE_URL": request.app.state.config.SONIOX_BASE_URL,
         "SONIOX_MODEL": request.app.state.config.SONIOX_MODEL,

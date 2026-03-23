@@ -989,6 +989,9 @@ GOOGLE_APPLICATION_CREDENTIALS_JSON = os.environ.get(
 AZURE_STORAGE_ENDPOINT = os.environ.get("AZURE_STORAGE_ENDPOINT", None)
 AZURE_STORAGE_CONTAINER_NAME = os.environ.get("AZURE_STORAGE_CONTAINER_NAME", None)
 AZURE_STORAGE_KEY = os.environ.get("AZURE_STORAGE_KEY", None)
+AZURE_UPLOAD_CHUNK_SIZE_BYTES = int(
+    os.environ.get("AZURE_UPLOAD_CHUNK_SIZE_BYTES", 64 * 1024 * 1024)
+)
 
 ####################################
 # File Upload DIR
@@ -4289,6 +4292,24 @@ VIDEO_INDEXER_LANGUAGE = PersistentConfig(
     os.getenv("VIDEO_INDEXER_LANGUAGE", "en-US"),
 )
 
+VIDEO_INDEXER_AZURE_BLOB_SAS = PersistentConfig(
+    "VIDEO_INDEXER_AZURE_BLOB_SAS",
+    "video_indexer.azure_blob_sas",
+    os.getenv("VIDEO_INDEXER_AZURE_BLOB_SAS", ""),
+)
+
+VIDEO_INDEXER_AZURE_BLOB_ENDPOINT = PersistentConfig(
+    "VIDEO_INDEXER_AZURE_BLOB_ENDPOINT",
+    "video_indexer.azure_blob_endpoint",
+    os.getenv("VIDEO_INDEXER_AZURE_BLOB_ENDPOINT", ""),
+)
+
+VIDEO_INDEXER_AZURE_BLOB_CONTAINER = PersistentConfig(
+    "VIDEO_INDEXER_AZURE_BLOB_CONTAINER",
+    "video_indexer.azure_blob_container",
+    os.getenv("VIDEO_INDEXER_AZURE_BLOB_CONTAINER", ""),
+)
+
 SONIOX_API_KEY = PersistentConfig(
     "SONIOX_API_KEY",
     "video_indexer.soniox.api_key",
@@ -4367,6 +4388,66 @@ SONIOX_CONTEXT_TEXT = PersistentConfig(
     "SONIOX_CONTEXT_TEXT",
     "video_indexer.soniox.context_text",
     os.getenv("SONIOX_CONTEXT_TEXT", ""),
+)
+
+SONIOX_UPLOAD_TIMEOUT_SECONDS = PersistentConfig(
+    "SONIOX_UPLOAD_TIMEOUT_SECONDS",
+    "video_indexer.soniox.upload_timeout_seconds",
+    int(os.getenv("SONIOX_UPLOAD_TIMEOUT_SECONDS", "300")),
+)
+
+SONIOX_REQUEST_TIMEOUT_SECONDS = PersistentConfig(
+    "SONIOX_REQUEST_TIMEOUT_SECONDS",
+    "video_indexer.soniox.request_timeout_seconds",
+    int(os.getenv("SONIOX_REQUEST_TIMEOUT_SECONDS", "30")),
+)
+
+SONIOX_TRANSCRIPT_TIMEOUT_SECONDS = PersistentConfig(
+    "SONIOX_TRANSCRIPT_TIMEOUT_SECONDS",
+    "video_indexer.soniox.transcript_timeout_seconds",
+    int(os.getenv("SONIOX_TRANSCRIPT_TIMEOUT_SECONDS", "60")),
+)
+
+SONIOX_RETRY_ATTEMPTS = PersistentConfig(
+    "SONIOX_RETRY_ATTEMPTS",
+    "video_indexer.soniox.retry_attempts",
+    int(os.getenv("SONIOX_RETRY_ATTEMPTS", "3")),
+)
+
+SONIOX_RETRY_BACKOFF_SECONDS = PersistentConfig(
+    "SONIOX_RETRY_BACKOFF_SECONDS",
+    "video_indexer.soniox.retry_backoff_seconds",
+    float(os.getenv("SONIOX_RETRY_BACKOFF_SECONDS", "1.5")),
+)
+
+SONIOX_VIDEO_FFMPEG_BASE_TIMEOUT_SECONDS = PersistentConfig(
+    "SONIOX_VIDEO_FFMPEG_BASE_TIMEOUT_SECONDS",
+    "video_indexer.soniox.video_ffmpeg_base_timeout_seconds",
+    int(os.getenv("SONIOX_VIDEO_FFMPEG_BASE_TIMEOUT_SECONDS", "300")),
+)
+
+SONIOX_VIDEO_FFMPEG_TIMEOUT_PER_MB_SECONDS = PersistentConfig(
+    "SONIOX_VIDEO_FFMPEG_TIMEOUT_PER_MB_SECONDS",
+    "video_indexer.soniox.video_ffmpeg_timeout_per_mb_seconds",
+    float(os.getenv("SONIOX_VIDEO_FFMPEG_TIMEOUT_PER_MB_SECONDS", "0.5")),
+)
+
+SONIOX_VIDEO_FFMPEG_MAX_TIMEOUT_SECONDS = PersistentConfig(
+    "SONIOX_VIDEO_FFMPEG_MAX_TIMEOUT_SECONDS",
+    "video_indexer.soniox.video_ffmpeg_max_timeout_seconds",
+    int(os.getenv("SONIOX_VIDEO_FFMPEG_MAX_TIMEOUT_SECONDS", "7200")),
+)
+
+RESUMABLE_UPLOAD_CHUNK_SIZE_BYTES = PersistentConfig(
+    "RESUMABLE_UPLOAD_CHUNK_SIZE_BYTES",
+    "file.resumable_upload.chunk_size_bytes",
+    int(os.getenv("RESUMABLE_UPLOAD_CHUNK_SIZE_BYTES", str(32 * 1024 * 1024))),
+)
+
+RESUMABLE_UPLOAD_SESSION_TTL_SECONDS = PersistentConfig(
+    "RESUMABLE_UPLOAD_SESSION_TTL_SECONDS",
+    "file.resumable_upload.session_ttl_seconds",
+    int(os.getenv("RESUMABLE_UPLOAD_SESSION_TTL_SECONDS", "86400")),
 )
 
 

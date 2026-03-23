@@ -34,6 +34,9 @@
 	let CLIENT_SECRET = '';
 	let INDEXING_PRESET = 'Default';
 	let LANGUAGE = 'en-US';
+	let VIDEO_INDEXER_AZURE_BLOB_SAS = '';
+	let VIDEO_INDEXER_AZURE_BLOB_ENDPOINT = '';
+	let VIDEO_INDEXER_AZURE_BLOB_CONTAINER = '';
 	let SONIOX_API_KEY = '';
 	let SONIOX_BASE_URL = 'https://api.soniox.com/v1';
 	let SONIOX_MODEL = 'stt-async-v4';
@@ -132,6 +135,9 @@
 				CLIENT_SECRET = config.CLIENT_SECRET ?? '';
 				INDEXING_PRESET = config.INDEXING_PRESET ?? 'Default';
 				LANGUAGE = config.LANGUAGE ?? 'en-US';
+				VIDEO_INDEXER_AZURE_BLOB_SAS = config.VIDEO_INDEXER_AZURE_BLOB_SAS ?? '';
+				VIDEO_INDEXER_AZURE_BLOB_ENDPOINT = config.VIDEO_INDEXER_AZURE_BLOB_ENDPOINT ?? '';
+				VIDEO_INDEXER_AZURE_BLOB_CONTAINER = config.VIDEO_INDEXER_AZURE_BLOB_CONTAINER ?? '';
 				SONIOX_API_KEY = config.SONIOX_API_KEY ?? '';
 				SONIOX_BASE_URL = config.SONIOX_BASE_URL ?? 'https://api.soniox.com/v1';
 				SONIOX_MODEL = config.SONIOX_MODEL ?? 'stt-async-v4';
@@ -170,6 +176,9 @@
 				CLIENT_SECRET,
 				INDEXING_PRESET,
 				LANGUAGE,
+				VIDEO_INDEXER_AZURE_BLOB_SAS,
+				VIDEO_INDEXER_AZURE_BLOB_ENDPOINT,
+				VIDEO_INDEXER_AZURE_BLOB_CONTAINER,
 				SONIOX_API_KEY,
 				SONIOX_BASE_URL,
 				SONIOX_MODEL,
@@ -449,6 +458,41 @@
 							</select>
 							<div class="text-xs text-gray-400 mt-0.5">
 								{$i18n.t('Use "multi" for automatic multi-language detection.')}
+							</div>
+						</div>
+
+						<div>
+							<div class="text-xs font-medium mb-1">{$i18n.t('Azure Blob SAS (Optional)')}</div>
+							<SensitiveInput
+								placeholder="sv=...&sig=..."
+								bind:value={VIDEO_INDEXER_AZURE_BLOB_SAS}
+							/>
+							<div class="text-xs text-gray-400 mt-0.5">
+								{$i18n.t('If set, large media uploads can go directly to Azure Blob. If empty, OpenWebUI uses current upload flow.')}
+							</div>
+						</div>
+
+						<div>
+							<div class="text-xs font-medium mb-1">{$i18n.t('Azure Blob Endpoint (Optional)')}</div>
+							<input
+								class="w-full rounded-lg py-2 px-4 text-sm bg-gray-50 dark:text-gray-300 dark:bg-gray-850 outline-hidden"
+								placeholder="https://<account>.blob.core.windows.net"
+								bind:value={VIDEO_INDEXER_AZURE_BLOB_ENDPOINT}
+							/>
+							<div class="text-xs text-gray-400 mt-0.5">
+								{$i18n.t('Used for Azure direct upload target. Leave empty to use server environment fallback.')}
+							</div>
+						</div>
+
+						<div>
+							<div class="text-xs font-medium mb-1">{$i18n.t('Azure Blob Container (Optional)')}</div>
+							<input
+								class="w-full rounded-lg py-2 px-4 text-sm bg-gray-50 dark:text-gray-300 dark:bg-gray-850 outline-hidden"
+								placeholder="video-uploads"
+								bind:value={VIDEO_INDEXER_AZURE_BLOB_CONTAINER}
+							/>
+							<div class="text-xs text-gray-400 mt-0.5">
+								{$i18n.t('Container must already exist and allow browser CORS for your OpenWebUI origin.')}
 							</div>
 						</div>
 					</div>
