@@ -69,6 +69,15 @@ router = APIRouter()
 
 from open_webui.utils.access_control.files import has_access_to_file
 
+def _get_media_processing_timeout_seconds(file_size_bytes: Optional[int]) -> int:
+    # Increase timeout for larger media so long-running analyzer jobs are not
+    # marked failed too early; keep a floor/ceiling to avoid extremes.
+    if not file_size_bytes or file_size_bytes <= 0:
+        return 3600
+    file_size_gb = file_size_bytes / float(1024**3)
+    return int(min(8 * 3600, max(3600, file_size_gb * 3600)))
+
+
 ############################
 # Upload File
 ############################
@@ -217,6 +226,13 @@ def _process_video_with_indexer(
         if media_type == "audio":
             preset = "AudioOnly"
 
+        file_size_bytes = (
+            (file_item.meta or {}).get("size")
+            if isinstance(file_item.meta, dict)
+            else None
+        )
+        timeout = _get_media_processing_timeout_seconds(file_size_bytes)
+
         # 1. Upload to Video Indexer
         # Notify frontend that upload is in progress
         Files.update_file_data_by_id(
@@ -275,7 +291,6 @@ def _process_video_with_indexer(
             import time as _time
 
             poll_interval = 15
-            timeout = 3600
             start = _time.time()
             while True:
                 elapsed = _time.time() - start
@@ -454,6 +469,7 @@ def _process_media_with_soniox(
                 resolved_path,
                 filename=file_item.filename,
                 content_type=content_type,
+                content_hash=file_item.hash,
             )
             if is_video_input:
                 preprocessing["state"] = "completed"
@@ -503,9 +519,13 @@ def _process_media_with_soniox(
         result = client.transcribe_file(
             file_path=normalized_path,
             filename=normalized_filename,
-            client_reference_id=file_item.id,
+            client_reference_id=(file_item.hash or file_item.id),
             poll_interval=10,
-            timeout=3600,
+            timeout=_get_media_processing_timeout_seconds(
+                (file_item.meta or {}).get("size")
+                if isinstance(file_item.meta, dict)
+                else None
+            ),
             on_progress=_on_soniox_progress,
         )
 
@@ -710,6 +730,7 @@ def upload_file_handler(
             FileForm(
                 **{
                     "id": id,
+                    "hash": calculate_sha256(file_path, 1024 * 1024),
                     "filename": name,
                     "path": file_path,
                     "data": {
@@ -936,7 +957,7 @@ async def get_file_process_status(
         or has_access_to_file(id, "read", user, db=db)
     ):
         if stream:
-            MAX_FILE_PROCESSING_DURATION = 3600 * 2
+            MAX_FILE_PROCESSING_DURATION = 3600 * 8
 
             async def event_stream(file_id):
                 # NOTE: We intentionally do NOT capture the request's db session here.

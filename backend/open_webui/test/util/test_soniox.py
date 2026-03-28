@@ -335,6 +335,44 @@ class TestNormalizeAudioForSoniox:
         assert command[-1] == "/tmp/meeting.soniox.mp3"
 
     @patch("open_webui.utils.soniox.subprocess.run")
+    @patch("open_webui.utils.soniox.os.path.exists")
+    @patch("open_webui.utils.soniox.os.makedirs")
+    @patch("open_webui.utils.soniox.Path.exists")
+    def test_extract_video_uses_cached_audio_when_hash_present(
+        self, mock_source_exists, mock_makedirs, mock_cache_exists, mock_run
+    ):
+        mock_source_exists.return_value = True
+        mock_cache_exists.return_value = True
+
+        out_path, out_name = normalize_audio_file_for_soniox(
+            "/tmp/meeting.mp4",
+            filename="meeting.mp4",
+            content_type="video/mp4",
+            content_hash="abc123",
+        )
+
+        assert out_path == "/tmp/open-webui-soniox-cache/abc123.mp3"
+        assert out_name == "meeting.mp3"
+        mock_makedirs.assert_called_once()
+        mock_run.assert_not_called()
+
+    @patch("open_webui.utils.soniox.os.path.getsize")
+    @patch("open_webui.utils.soniox.subprocess.run")
+    @patch("open_webui.utils.soniox.Path.exists")
+    def test_extract_video_timeout_scales_for_large_input(
+        self, mock_exists, mock_run, mock_getsize
+    ):
+        mock_exists.return_value = True
+        mock_getsize.return_value = 2 * 1024 * 1024 * 1024
+        mock_run.return_value = SimpleNamespace(returncode=0, stderr="")
+
+        normalize_audio_file_for_soniox(
+            "/tmp/meeting.mp4", filename="meeting.mp4", content_type="video/mp4"
+        )
+
+        assert mock_run.call_args.kwargs["timeout"] == 12288
+
+    @patch("open_webui.utils.soniox.subprocess.run")
     @patch("open_webui.utils.soniox.Path.exists")
     def test_extract_quicktime_mov_for_iphone_upload(self, mock_exists, mock_run):
         mock_exists.return_value = True
